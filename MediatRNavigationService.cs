@@ -66,6 +66,7 @@ namespace VSIXExtention
                 
                 // Check if this is a notification or request
                 var requestInfo = MediatRPatternMatcher.GetRequestInfo(requestTypeSymbol, null);
+                
                 if (requestInfo == null)
                 {
                     return false;
@@ -112,6 +113,7 @@ namespace VSIXExtention
                 if (!string.IsNullOrEmpty(selectedHandler))
                 {
                     var handler = handlers.FirstOrDefault(h => h.HandlerTypeName == selectedHandler);
+                    
                     if (handler != null)
                     {
                         return await NavigateToLocationAsync(handler.Location);
@@ -239,6 +241,7 @@ namespace VSIXExtention
                 Location = new System.Drawing.Point(10, 50),
                 Size = new System.Drawing.Size(370, 150)
             };
+            
             listBox.Items.AddRange(handlerNames);
             listBox.SelectedIndex = 0;
 
