@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommandTable xmlns="http://schemas.microsoft.com/VisualStudio/2005-10-18/CommandTable" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <Extern href="stdidcmd.h"/>
+  <Extern href="vsshlids.h"/>
+
+  <Commands package="guidVSIXExtentionPackage">
+    <Groups>
+      <Group guid="guidVSIXExtentionPackageCmdSet" id="MyMenuGroup" priority="0x0600">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_EDIT"/>
+      </Group>
+      <Group guid="guidVSIXExtentionPackageCmdSet" id="MyToolsMenuGroup" priority="0x0600">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_TOOLS"/>
+      </Group>
+      <Group guid="guidVSIXExtentionPackageCmdSet" id="MyContextMenuGroup" priority="0x0100">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_CODEWIN"/>
+      </Group>
+    </Groups>
+
+    <Buttons>
+      <Button guid="guidVSIXExtentionPackageCmdSet" id="GoToMediatRImplementationCommandId" priority="0x0100" type="Button">
+        <Parent guid="guidVSIXExtentionPackageCmdSet" id="MyMenuGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <CommandFlag>TextChanges</CommandFlag>
+        <Strings>
+          <ButtonText>Go to MediatR Implementation</ButtonText>
+        </Strings>
+      </Button>
+      <Button guid="guidVSIXExtentionPackageCmdSet" id="GoToMediatRImplementationTestCommandId" priority="0x0100" type="Button">
+        <Parent guid="guidVSIXExtentionPackageCmdSet" id="MyToolsMenuGroup" />
+        <Strings>
+          <ButtonText>MediatR Extension Test</ButtonText>
+        </Strings>
+      </Button>
+      <Button guid="guidVSIXExtentionPackageCmdSet" id="GoToMediatRImplementationContextCommandId" priority="0x0200" type="Button">
+        <Parent guid="guidVSIXExtentionPackageCmdSet" id="MyContextMenuGroup" />
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <CommandFlag>TextChanges</CommandFlag>
+        <Strings>
+          <ButtonText>Go to MediatR Implementation</ButtonText>
+          <MenuText>Go to MediatR Implementation</MenuText>
+          <CommandName>Go to MediatR Implementation</CommandName>
+        </Strings>
+      </Button>
+    </Buttons>
+  </Commands>
+
+  <KeyBindings>
+    <KeyBinding guid="guidVSIXExtentionPackageCmdSet" id="GoToMediatRImplementationCommandId" editor="guidVSStd97" key1="F12" mod1="Control Alt"/>
+  </KeyBindings>
+
+  <Symbols>
+    <GuidSymbol name="guidVSIXExtentionPackage" value="{cf38f10f-fa64-4c4b-9ebc-6d7d897607ea}" />
+
+    <GuidSymbol name="guidVSIXExtentionPackageCmdSet" value="{cf38f10f-fa64-4c4b-9ebc-6d7d897607eb}">
+      <IDSymbol name="MyMenuGroup" value="0x1020" />
+      <IDSymbol name="MyToolsMenuGroup" value="0x1021" />
+      <IDSymbol name="MyContextMenuGroup" value="0x1022" />
+      <IDSymbol name="GoToMediatRImplementationCommandId" value="0x0100" />
+      <IDSymbol name="GoToMediatRImplementationTestCommandId" value="0x0101" />
+      <IDSymbol name="GoToMediatRImplementationContextCommandId" value="0x0102" />
+    </GuidSymbol>
+  </Symbols>
+</CommandTable> 
