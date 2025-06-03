@@ -15,178 +15,42 @@ namespace VSIXExtention
     [Export]
     public class MediatRGoToImplementationProvider
     {
-        private readonly System.IServiceProvider _serviceProvider;
-        private readonly MediatRNavigationService _navigationService;
-        private readonly ITextDocumentFactoryService _textDocumentFactory;
-
-        public MediatRGoToImplementationProvider(System.IServiceProvider serviceProvider,
-            ITextDocumentFactoryService textDocumentFactory,
-            MediatRNavigationService navigationService)
-        {
-            _serviceProvider = serviceProvider;
-            _navigationService = navigationService;
-            _serviceProvider = serviceProvider;
-            _textDocumentFactory = textDocumentFactory;
-            _navigationService = navigationService;
-        }
-
+        private readonly IServiceProvider _serviceProvider;
+        private readonly Lazy<MediatRNavigationService> _navigationService;
+        private VisualStudioWorkspace _cachedWorkspace;
+        private readonly object _workspaceLock = new object();
 
         [ImportingConstructor]
         public MediatRGoToImplementationProvider()
         {
             _serviceProvider = ServiceProvider.GlobalProvider;
-            _navigationService = new MediatRNavigationService(_serviceProvider);
+            // Lazy initialization to improve startup performance
+            _navigationService = new Lazy<MediatRNavigationService>(() => new MediatRNavigationService(_serviceProvider));
         }
+
         public async Task<bool> TryGoToImplementationAsync(ITextView textView, int position)
         {
             try
             {
+                // Fast path: check context before any expensive operations
+                if (!IsValidContext(textView))
+                    return false;
+
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                // Use the same file path detection as context check
-                var textBuffer = textView.TextBuffer;
-                var filePath = GetFilePathFromTextBuffer(textBuffer);
-
-                // Early bailout: Only process C# files
-                if (string.IsNullOrEmpty(filePath) || !filePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
-                    return false;
-
-                // Early bailout: Skip multiline selections (performance optimization)
-                if (!textView.Selection.IsEmpty)
-                {
-                    var selectionSpan = textView.Selection.SelectedSpans[0];
-                    var startLine = textView.TextSnapshot.GetLineFromPosition(selectionSpan.Start.Position);
-                    var endLine = textView.TextSnapshot.GetLineFromPosition(selectionSpan.End.Position);
-
-                    // If selection spans multiple lines, unlikely to be a specific class navigation
-                    if (endLine.LineNumber > startLine.LineNumber)
-                        return false;
-                }
-
-                // Use the same workspace detection logic as context check
-                VisualStudioWorkspace workspace = null;
-
-                // Method 1: Through service provider
-                workspace = _serviceProvider.GetService(typeof(VisualStudioWorkspace)) as VisualStudioWorkspace;
-
-                // Method 2: Through global service provider
-                if (workspace == null)
-                {
-                    workspace = Package.GetGlobalService(typeof(VisualStudioWorkspace)) as VisualStudioWorkspace;
-                }
-
-                // Method 3: Through component model
-                if (workspace == null)
-                {
-                    try
-                    {
-                        var componentModel = _serviceProvider.GetService(typeof(SComponentModel)) as IComponentModel;
-                        if (componentModel != null)
-                        {
-                            workspace = componentModel.GetService<VisualStudioWorkspace>();
-                        }
-                    }
-                    catch
-                    {
-                        // Ignore component model failures
-                    }
-                }
-
+                var workspace = GetOrCreateWorkspace();
                 if (workspace?.CurrentSolution == null)
-                {
                     return false;
-                }
 
-                var documentIds = workspace.CurrentSolution.GetDocumentIdsWithFilePath(filePath);
-                var documentId = documentIds.FirstOrDefault();
-
-                if (documentId == null)
-                {
+                var document = await GetDocumentAsync(textView, workspace);
+                if (document == null)
                     return false;
-                }
 
-                var doc = workspace.CurrentSolution.GetDocument(documentId);
-
-                if (doc == null)
-                {
+                var typeSymbol = await GetMediatRTypeSymbolAsync(textView, position, document);
+                if (typeSymbol == null)
                     return false;
-                }
 
-                var syntaxTree = await doc.GetSyntaxTreeAsync();
-
-                if (syntaxTree == null)
-                {
-                    return false;
-                }
-
-                // Check if there's a selection first, then fall back to the provided position
-                Microsoft.CodeAnalysis.Text.TextSpan textSpan;
-
-                if (!textView.Selection.IsEmpty)
-                {
-                    // Use the selection span
-                    var selectionSpan = textView.Selection.SelectedSpans[0];
-                    textSpan = new Microsoft.CodeAnalysis.Text.TextSpan(selectionSpan.Start.Position, selectionSpan.Length);
-                }
-                else
-                {
-                    // Use provided position (usually caret position)
-                    textSpan = new Microsoft.CodeAnalysis.Text.TextSpan(position, 0);
-                }
-
-                var root = await syntaxTree.GetRootAsync();
-                var node = root.FindNode(textSpan);
-
-                // Early bailout: Quick syntax check - if we're not in/on a class, skip expensive semantic analysis
-                var classDeclaration = node.FirstAncestorOrSelf<ClassDeclarationSyntax>();
-
-                if (classDeclaration == null)
-                {
-                    // Check if we're on an identifier that might reference a class
-                    var identifierName = node as IdentifierNameSyntax ?? node.FirstAncestorOrSelf<IdentifierNameSyntax>();
-                    if (identifierName == null)
-                        return false; // Not on a class or identifier, definitely not MediatR
-                }
-
-                // Now do the expensive semantic analysis only if we passed the quick checks
-                var semanticModel = await doc.GetSemanticModelAsync();
-
-                if (semanticModel == null)
-                {
-                    return false;
-                }
-
-                // Check if we're on a class declaration
-                if (classDeclaration != null)
-                {
-                    var typeSymbol = semanticModel.GetDeclaredSymbol(classDeclaration) as INamedTypeSymbol;
-                    if (typeSymbol != null)
-                    {
-                        var requestInfo = MediatRPatternMatcher.GetRequestInfo(typeSymbol, semanticModel);
-                        if (requestInfo != null)
-                        {
-                            return await _navigationService.TryNavigateToHandlerAsync(typeSymbol);
-                        }
-                    }
-                }
-
-                // Check if we're on an identifier that references a MediatR request
-                var identifierName2 = node as IdentifierNameSyntax ?? node.FirstAncestorOrSelf<IdentifierNameSyntax>();
-
-                if (identifierName2 != null)
-                {
-                    var symbolInfo = semanticModel.GetSymbolInfo(identifierName2);
-                    if (symbolInfo.Symbol is INamedTypeSymbol namedTypeSymbol)
-                    {
-                        var requestInfo = MediatRPatternMatcher.GetRequestInfo(namedTypeSymbol, semanticModel);
-                        if (requestInfo != null)
-                        {
-                            return await _navigationService.TryNavigateToHandlerAsync(namedTypeSymbol);
-                        }
-                    }
-                }
-
-                return false;
+                return await _navigationService.Value.TryNavigateToHandlerAsync(typeSymbol);
             }
             catch (Exception ex)
             {
@@ -195,25 +59,179 @@ namespace VSIXExtention
             }
         }
 
-        private string GetFilePathFromTextBuffer(Microsoft.VisualStudio.Text.ITextBuffer textBuffer)
+        private bool IsValidContext(ITextView textView)
+        {
+            // Early bailout: check buffer properties first (fastest check)
+            var textBuffer = textView?.TextBuffer;
+            if (textBuffer == null)
+                return false;
+
+            // Quick content type check
+            var contentType = textBuffer.ContentType;
+            if (contentType?.TypeName != "CSharp")
+                return false;
+
+            var filePath = GetFilePathFromTextBuffer(textBuffer);
+            
+            // Only process C# files
+            if (string.IsNullOrEmpty(filePath) || !filePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            // Skip multiline selections for performance
+            if (!textView.Selection.IsEmpty && IsMultilineSelection(textView))
+                return false;
+
+            return true;
+        }
+
+        private bool IsMultilineSelection(ITextView textView)
+        {
+            var selectionSpan = textView.Selection.SelectedSpans[0];
+            var startLine = textView.TextSnapshot.GetLineFromPosition(selectionSpan.Start.Position);
+            var endLine = textView.TextSnapshot.GetLineFromPosition(selectionSpan.End.Position);
+            return endLine.LineNumber > startLine.LineNumber;
+        }
+
+        private VisualStudioWorkspace GetOrCreateWorkspace()
+        {
+            // Thread-safe lazy workspace initialization with caching
+            if (_cachedWorkspace != null)
+                return _cachedWorkspace;
+
+            lock (_workspaceLock)
+            {
+                if (_cachedWorkspace != null)
+                    return _cachedWorkspace;
+
+                _cachedWorkspace = GetVisualStudioWorkspace();
+                return _cachedWorkspace;
+            }
+        }
+
+        private VisualStudioWorkspace GetVisualStudioWorkspace()
+        {
+            // Try methods in order of likelihood to succeed (most common first)
+            
+            // Method 1: Through global service provider (most reliable)
+            var workspace = Package.GetGlobalService(typeof(VisualStudioWorkspace)) as VisualStudioWorkspace;
+            if (workspace != null)
+                return workspace;
+
+            // Method 2: Through service provider
+            workspace = _serviceProvider.GetService(typeof(VisualStudioWorkspace)) as VisualStudioWorkspace;
+            if (workspace != null)
+                return workspace;
+
+            // Method 3: Through component model (fallback)
+            try
+            {
+                var componentModel = _serviceProvider.GetService(typeof(SComponentModel)) as IComponentModel;
+                return componentModel?.GetService<VisualStudioWorkspace>();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private async Task<Document> GetDocumentAsync(ITextView textView, VisualStudioWorkspace workspace)
+        {
+            var filePath = GetFilePathFromTextBuffer(textView.TextBuffer);
+            
+            // Use faster method to get document if available
+            var documentIds = workspace.CurrentSolution.GetDocumentIdsWithFilePath(filePath);
+            if (!documentIds.Any())
+                return null;
+
+            // Take first matching document (usually there's only one)
+            var documentId = documentIds.First();
+            return workspace.CurrentSolution.GetDocument(documentId);
+        }
+
+        private async Task<INamedTypeSymbol> GetMediatRTypeSymbolAsync(ITextView textView, int position, Document document)
+        {
+            // Get syntax tree once and reuse
+            var syntaxTree = await document.GetSyntaxTreeAsync();
+            if (syntaxTree == null)
+                return null;
+
+            var textSpan = GetTextSpan(textView, position);
+            var root = await syntaxTree.GetRootAsync();
+            
+            // Find the most specific node first
+            var node = root.FindNode(textSpan, getInnermostNodeForTie: true);
+
+            // Quick syntax check - must be in/on a class or identifier
+            var classDeclaration = node.FirstAncestorOrSelf<ClassDeclarationSyntax>();
+            var identifierName = node as IdentifierNameSyntax ?? node.FirstAncestorOrSelf<IdentifierNameSyntax>();
+
+            if (classDeclaration == null && identifierName == null)
+                return null;
+
+            // Only get semantic model if we passed syntax checks (expensive operation)
+            var semanticModel = await document.GetSemanticModelAsync();
+            if (semanticModel == null)
+                return null;
+
+            // Check class declaration first (more common case)
+            if (classDeclaration != null)
+            {
+                var typeSymbol = semanticModel.GetDeclaredSymbol(classDeclaration) as INamedTypeSymbol;
+                if (IsValidMediatRType(typeSymbol, semanticModel))
+                    return typeSymbol;
+            }
+
+            // Check identifier reference (less common)
+            if (identifierName != null)
+            {
+                var symbolInfo = semanticModel.GetSymbolInfo(identifierName);
+                if (symbolInfo.Symbol is INamedTypeSymbol namedTypeSymbol && IsValidMediatRType(namedTypeSymbol, semanticModel))
+                    return namedTypeSymbol;
+            }
+
+            return null;
+        }
+
+        private Microsoft.CodeAnalysis.Text.TextSpan GetTextSpan(ITextView textView, int position)
+        {
+            if (!textView.Selection.IsEmpty)
+            {
+                var selectionSpan = textView.Selection.SelectedSpans[0];
+                return new Microsoft.CodeAnalysis.Text.TextSpan(selectionSpan.Start.Position, selectionSpan.Length);
+            }
+
+            return new Microsoft.CodeAnalysis.Text.TextSpan(position, 0);
+        }
+
+        private bool IsValidMediatRType(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
+        {
+            return typeSymbol != null && MediatRPatternMatcher.GetRequestInfo(typeSymbol, semanticModel) != null;
+        }
+
+        private string GetFilePathFromTextBuffer(ITextBuffer textBuffer)
         {
             try
             {
-                if (textBuffer.Properties.TryGetProperty<Microsoft.VisualStudio.TextManager.Interop.IVsTextBuffer>(typeof(Microsoft.VisualStudio.TextManager.Interop.IVsTextBuffer), out var vsTextBuffer))
+                // Method 1: Through TextDocument (fastest and most reliable)
+                if (textBuffer.Properties.TryGetProperty<ITextDocument>(typeof(ITextDocument), out var textDocument))
                 {
-                    var persistFileFormat = vsTextBuffer as Microsoft.VisualStudio.Shell.Interop.IPersistFileFormat;
+                    var filePath = textDocument?.FilePath;
+                    if (!string.IsNullOrEmpty(filePath))
+                        return filePath;
+                }
 
-                    if (persistFileFormat != null)
+                // Method 2: Through VsTextBuffer (fallback)
+                if (textBuffer.Properties.TryGetProperty<Microsoft.VisualStudio.TextManager.Interop.IVsTextBuffer>(
+                    typeof(Microsoft.VisualStudio.TextManager.Interop.IVsTextBuffer), out var vsTextBuffer))
+                {
+                    if (vsTextBuffer is Microsoft.VisualStudio.Shell.Interop.IPersistFileFormat persistFileFormat)
                     {
                         persistFileFormat.GetCurFile(out var filePath, out _);
                         return filePath;
                     }
                 }
 
-                // Alternative approach using document properties
-                textBuffer.Properties.TryGetProperty<Microsoft.VisualStudio.Text.ITextDocument>(typeof(Microsoft.VisualStudio.Text.ITextDocument), out Microsoft.VisualStudio.Text.ITextDocument textDocument);
-
-                return textDocument?.FilePath;
+                return null;
             }
             catch
             {

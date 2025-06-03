@@ -28,36 +28,19 @@ namespace VSIXExtention
             public bool IsNotificationHandler { get; set; }
         }
 
+        private const string MediatRNamespace = "MediatR";
+        private const string RequestInterface = "IRequest";
+        private const string NotificationInterface = "INotification";
+        private const string RequestHandlerInterface = "IRequestHandler";
+        private const string NotificationHandlerInterface = "INotificationHandler";
+
         public static bool IsMediatRRequest(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
         {
-            if (typeSymbol == null) 
-            {
-                System.Diagnostics.Debug.WriteLine("MediatR Pattern: Type symbol is null");
-                return false;
-            }
+            if (typeSymbol == null) return false;
 
-            System.Diagnostics.Debug.WriteLine($"MediatR Pattern: Checking type: {typeSymbol.Name}");
-
-            var interfaces = typeSymbol.AllInterfaces;
-            System.Diagnostics.Debug.WriteLine($"MediatR Pattern: Found {interfaces.Length} interfaces");
-            
-            foreach (var @interface in interfaces)
-            {
-                var namespaceName = @interface.ContainingNamespace?.ToDisplayString();
-                System.Diagnostics.Debug.WriteLine($"MediatR Pattern: Interface: {@interface.Name}, Namespace: {namespaceName}");
-                
-                if (namespaceName == "MediatR")
-                {
-                    if (@interface.Name == "IRequest" || @interface.Name == "INotification")
-                    {
-                        System.Diagnostics.Debug.WriteLine($"MediatR Pattern: Found MediatR interface: {@interface.Name}");
-                        return true;
-                    }
-                }
-            }
-
-            System.Diagnostics.Debug.WriteLine("MediatR Pattern: No MediatR interfaces found");
-            return false;
+            return typeSymbol.AllInterfaces.Any(i => 
+                i.ContainingNamespace?.ToDisplayString() == MediatRNamespace &&
+                (i.Name == RequestInterface || i.Name == NotificationInterface));
         }
 
         public static MediatRRequestInfo GetRequestInfo(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
@@ -65,38 +48,32 @@ namespace VSIXExtention
             if (!IsMediatRRequest(typeSymbol, semanticModel))
                 return null;
 
-            var interfaces = typeSymbol.AllInterfaces;
-            
-            foreach (var @interface in interfaces)
+            foreach (var @interface in typeSymbol.AllInterfaces.Where(i => i.ContainingNamespace?.ToDisplayString() == MediatRNamespace))
             {
-                var namespaceName = @interface.ContainingNamespace?.ToDisplayString();
-                if (namespaceName == "MediatR")
+                if (@interface.Name == RequestInterface)
                 {
-                    if (@interface.Name == "IRequest")
-                    {
-                        var hasResponse = @interface.TypeArguments.Length > 0;
-                        var responseTypeName = hasResponse ? @interface.TypeArguments[0].Name : null;
+                    var hasResponse = @interface.TypeArguments.Length > 0;
+                    var responseTypeName = hasResponse ? @interface.TypeArguments[0].Name : null;
 
-                        return new MediatRRequestInfo
-                        {
-                            RequestTypeName = typeSymbol.Name,
-                            ResponseTypeName = responseTypeName,
-                            RequestSymbol = typeSymbol,
-                            HasResponse = hasResponse,
-                            IsNotification = false
-                        };
-                    }
-                    else if (@interface.Name == "INotification")
+                    return new MediatRRequestInfo
                     {
-                        return new MediatRRequestInfo
-                        {
-                            RequestTypeName = typeSymbol.Name,
-                            ResponseTypeName = null,
-                            RequestSymbol = typeSymbol,
-                            HasResponse = false,
-                            IsNotification = true
-                        };
-                    }
+                        RequestTypeName = typeSymbol.Name,
+                        ResponseTypeName = responseTypeName,
+                        RequestSymbol = typeSymbol,
+                        HasResponse = hasResponse,
+                        IsNotification = false
+                    };
+                }
+                else if (@interface.Name == NotificationInterface)
+                {
+                    return new MediatRRequestInfo
+                    {
+                        RequestTypeName = typeSymbol.Name,
+                        ResponseTypeName = null,
+                        RequestSymbol = typeSymbol,
+                        HasResponse = false,
+                        IsNotification = true
+                    };
                 }
             }
 
@@ -107,21 +84,9 @@ namespace VSIXExtention
         {
             if (typeSymbol == null) return false;
 
-            var interfaces = typeSymbol.AllInterfaces;
-            
-            foreach (var @interface in interfaces)
-            {
-                var namespaceName = @interface.ContainingNamespace?.ToDisplayString();
-                if (namespaceName == "MediatR")
-                {
-                    if (@interface.Name == "IRequestHandler" || @interface.Name == "INotificationHandler")
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
+            return typeSymbol.AllInterfaces.Any(i => 
+                i.ContainingNamespace?.ToDisplayString() == MediatRNamespace &&
+                (i.Name == RequestHandlerInterface || i.Name == NotificationHandlerInterface));
         }
 
         public static MediatRHandlerInfo GetHandlerInfo(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
@@ -129,42 +94,36 @@ namespace VSIXExtention
             if (!IsMediatRHandler(typeSymbol, semanticModel))
                 return null;
 
-            var interfaces = typeSymbol.AllInterfaces;
-            
-            foreach (var @interface in interfaces)
+            foreach (var @interface in typeSymbol.AllInterfaces.Where(i => i.ContainingNamespace?.ToDisplayString() == MediatRNamespace))
             {
-                var namespaceName = @interface.ContainingNamespace?.ToDisplayString();
-                if (namespaceName == "MediatR")
+                if (@interface.Name == RequestHandlerInterface && @interface.TypeArguments.Length >= 1)
                 {
-                    if (@interface.Name == "IRequestHandler" && @interface.TypeArguments.Length >= 1)
-                    {
-                        var requestTypeName = @interface.TypeArguments[0].Name;
-                        var responseTypeName = @interface.TypeArguments.Length > 1 ? @interface.TypeArguments[1].Name : null;
+                    var requestTypeName = @interface.TypeArguments[0].Name;
+                    var responseTypeName = @interface.TypeArguments.Length > 1 ? @interface.TypeArguments[1].Name : null;
 
-                        return new MediatRHandlerInfo
-                        {
-                            HandlerTypeName = typeSymbol.Name,
-                            RequestTypeName = requestTypeName,
-                            ResponseTypeName = responseTypeName,
-                            HandlerSymbol = typeSymbol,
-                            Location = typeSymbol.Locations.FirstOrDefault(),
-                            IsNotificationHandler = false
-                        };
-                    }
-                    else if (@interface.Name == "INotificationHandler" && @interface.TypeArguments.Length >= 1)
+                    return new MediatRHandlerInfo
                     {
-                        var requestTypeName = @interface.TypeArguments[0].Name;
+                        HandlerTypeName = typeSymbol.Name,
+                        RequestTypeName = requestTypeName,
+                        ResponseTypeName = responseTypeName,
+                        HandlerSymbol = typeSymbol,
+                        Location = typeSymbol.Locations.FirstOrDefault(),
+                        IsNotificationHandler = false
+                    };
+                }
+                else if (@interface.Name == NotificationHandlerInterface && @interface.TypeArguments.Length >= 1)
+                {
+                    var requestTypeName = @interface.TypeArguments[0].Name;
 
-                        return new MediatRHandlerInfo
-                        {
-                            HandlerTypeName = typeSymbol.Name,
-                            RequestTypeName = requestTypeName,
-                            ResponseTypeName = null,
-                            HandlerSymbol = typeSymbol,
-                            Location = typeSymbol.Locations.FirstOrDefault(),
-                            IsNotificationHandler = true
-                        };
-                    }
+                    return new MediatRHandlerInfo
+                    {
+                        HandlerTypeName = typeSymbol.Name,
+                        RequestTypeName = requestTypeName,
+                        ResponseTypeName = null,
+                        HandlerSymbol = typeSymbol,
+                        Location = typeSymbol.Locations.FirstOrDefault(),
+                        IsNotificationHandler = true
+                    };
                 }
             }
 
@@ -173,56 +132,17 @@ namespace VSIXExtention
 
         public static async Task<List<MediatRHandlerInfo>> FindHandlersInSolution(Solution solution, string requestTypeName)
         {
-            System.Diagnostics.Debug.WriteLine($"MediatR Pattern: Starting handler search for request type: {requestTypeName}");
             var handlers = new List<MediatRHandlerInfo>();
 
             foreach (var project in solution.Projects)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Pattern: Scanning project: {project.Name}");
-                
                 var compilation = await project.GetCompilationAsync();
-                if (compilation == null) 
-                {
-                    System.Diagnostics.Debug.WriteLine($"MediatR Pattern: No compilation for project: {project.Name}");
-                    continue;
-                }
+                if (compilation == null) continue;
 
-                System.Diagnostics.Debug.WriteLine($"MediatR Pattern: Project {project.Name} has {compilation.SyntaxTrees.Count()} syntax trees");
-
-                foreach (var syntaxTree in compilation.SyntaxTrees)
-                {
-                    var semanticModel = compilation.GetSemanticModel(syntaxTree);
-                    var root = await syntaxTree.GetRootAsync();
-
-                    var classDeclarations = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
-                    var classCount = classDeclarations.Count();
-                    
-                    if (classCount > 0)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"MediatR Pattern: Examining {classCount} classes in {syntaxTree.FilePath}");
-                    }
-
-                    foreach (var classDecl in classDeclarations)
-                    {
-                        var typeSymbol = semanticModel.GetDeclaredSymbol(classDecl) as INamedTypeSymbol;
-                        if (typeSymbol == null) continue;
-
-                        var handlerInfo = GetHandlerInfo(typeSymbol, semanticModel);
-                        if (handlerInfo != null)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"MediatR Pattern: Found handler candidate: {handlerInfo.HandlerTypeName} for request: {handlerInfo.RequestTypeName}");
-                            
-                            if (handlerInfo.RequestTypeName == requestTypeName)
-                            {
-                                System.Diagnostics.Debug.WriteLine($"MediatR Pattern: MATCH! Handler {handlerInfo.HandlerTypeName} matches request {requestTypeName}");
-                                handlers.Add(handlerInfo);
-                            }
-                        }
-                    }
-                }
+                var projectHandlers = await FindHandlersInProject(compilation, requestTypeName);
+                handlers.AddRange(projectHandlers);
             }
 
-            System.Diagnostics.Debug.WriteLine($"MediatR Pattern: Handler search complete. Found {handlers.Count} matching handlers.");
             return handlers;
         }
 
@@ -235,23 +155,60 @@ namespace VSIXExtention
                 var compilation = await project.GetCompilationAsync();
                 if (compilation == null) continue;
 
-                foreach (var syntaxTree in compilation.SyntaxTrees)
+                var projectHandlers = await FindNotificationHandlersInProject(compilation, notificationTypeName);
+                handlers.AddRange(projectHandlers);
+            }
+
+            return handlers;
+        }
+
+        private static async Task<List<MediatRHandlerInfo>> FindHandlersInProject(Compilation compilation, string requestTypeName)
+        {
+            var handlers = new List<MediatRHandlerInfo>();
+
+            foreach (var syntaxTree in compilation.SyntaxTrees)
+            {
+                var semanticModel = compilation.GetSemanticModel(syntaxTree);
+                var root = await syntaxTree.GetRootAsync();
+
+                var classDeclarations = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
+
+                foreach (var classDecl in classDeclarations)
                 {
-                    var semanticModel = compilation.GetSemanticModel(syntaxTree);
-                    var root = await syntaxTree.GetRootAsync();
+                    var typeSymbol = semanticModel.GetDeclaredSymbol(classDecl) as INamedTypeSymbol;
+                    if (typeSymbol == null) continue;
 
-                    var classDeclarations = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
-
-                    foreach (var classDecl in classDeclarations)
+                    var handlerInfo = GetHandlerInfo(typeSymbol, semanticModel);
+                    if (handlerInfo?.RequestTypeName == requestTypeName)
                     {
-                        var typeSymbol = semanticModel.GetDeclaredSymbol(classDecl) as INamedTypeSymbol;
-                        if (typeSymbol == null) continue;
+                        handlers.Add(handlerInfo);
+                    }
+                }
+            }
 
-                        var handlerInfo = GetHandlerInfo(typeSymbol, semanticModel);
-                        if (handlerInfo != null && handlerInfo.IsNotificationHandler && handlerInfo.RequestTypeName == notificationTypeName)
-                        {
-                            handlers.Add(handlerInfo);
-                        }
+            return handlers;
+        }
+
+        private static async Task<List<MediatRHandlerInfo>> FindNotificationHandlersInProject(Compilation compilation, string notificationTypeName)
+        {
+            var handlers = new List<MediatRHandlerInfo>();
+
+            foreach (var syntaxTree in compilation.SyntaxTrees)
+            {
+                var semanticModel = compilation.GetSemanticModel(syntaxTree);
+                var root = await syntaxTree.GetRootAsync();
+
+                var classDeclarations = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
+
+                foreach (var classDecl in classDeclarations)
+                {
+                    var typeSymbol = semanticModel.GetDeclaredSymbol(classDecl) as INamedTypeSymbol;
+                    if (typeSymbol == null) continue;
+
+                    var handlerInfo = GetHandlerInfo(typeSymbol, semanticModel);
+                    if (handlerInfo != null && handlerInfo.IsNotificationHandler && handlerInfo.RequestTypeName == notificationTypeName)
+                    {
+                        handlers.Add(handlerInfo);
                     }
                 }
             }
