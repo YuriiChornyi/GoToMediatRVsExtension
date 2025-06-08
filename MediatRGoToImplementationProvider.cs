@@ -13,12 +13,13 @@ using Microsoft.VisualStudio.Text.Editor;
 namespace VSIXExtention
 {
     [Export]
-    public class MediatRGoToImplementationProvider
+    public class MediatRGoToImplementationProvider : IDisposable
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly Lazy<MediatRNavigationService> _navigationService;
         private VisualStudioWorkspace _cachedWorkspace;
         private readonly object _workspaceLock = new object();
+        private bool _disposed = false;
 
         [ImportingConstructor]
         public MediatRGoToImplementationProvider()
@@ -236,6 +237,25 @@ namespace VSIXExtention
             catch
             {
                 return null;
+            }
+        }
+
+        public void Dispose()
+        {
+            if (!_disposed)
+            {
+                try
+                {
+                    // Only dispose if the lazy value was created
+                    if (_navigationService.IsValueCreated)
+                    {
+                        _navigationService.Value.Dispose();
+                    }
+                }
+                finally
+                {
+                    _disposed = true;
+                }
             }
         }
     }

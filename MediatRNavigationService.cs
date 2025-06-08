@@ -1,21 +1,29 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
 using Microsoft.CodeAnalysis;
+using Microsoft.VisualStudio;
+using Microsoft.VisualStudio.ComponentModelHost;
 using Microsoft.VisualStudio.LanguageServices;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.TextManager.Interop;
-using Microsoft.VisualStudio;
-using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using System.Drawing;
-using System.Windows.Forms;
-using Microsoft.VisualStudio.ComponentModelHost;
+using Newtonsoft.Json;
 
 namespace VSIXExtention
 {
-    public class MediatRNavigationService
+    public class HandlerDisplayInfo
+    {
+        public MediatRPatternMatcher.MediatRHandlerInfo Handler { get; set; }
+        public string DisplayText { get; set; }
+    }
+
+    public class MediatRNavigationService : IDisposable
     {
         private readonly IServiceProvider _serviceProvider;
         private VisualStudioWorkspace _cachedWorkspace;
@@ -23,13 +31,24 @@ namespace VSIXExtention
         
         // Cache compilation results to avoid repeated expensive operations
         private readonly ConcurrentDictionary<ProjectId, Compilation> _compilationCache = new ConcurrentDictionary<ProjectId, Compilation>();
-        private readonly ConcurrentDictionary<string, List<MediatRPatternMatcher.MediatRHandlerInfo>> _handlerCache = new ConcurrentDictionary<string, List<MediatRPatternMatcher.MediatRHandlerInfo>>();
-        private DateTime _lastCacheUpdate = DateTime.MinValue;
-        private readonly TimeSpan _cacheValidityPeriod = TimeSpan.FromMinutes(5); // Cache for 5 minutes
+        
+        // Track solution version to detect changes
+        private int _lastSolutionVersion = -1;
+        private bool _workspaceEventsSubscribed = false;
+        private bool _disposed = false;
+        
+        // Document save event handling
+        internal IVsRunningDocumentTable _runningDocumentTable;
+        private uint _rdtCookie;
+        private bool _rdtEventsSubscribed = false;
+        
+        // Cache manager - separated concern
+        private MediatRCacheManager _cacheManager;
 
         public MediatRNavigationService(IServiceProvider serviceProvider)
         {
             _serviceProvider = serviceProvider;
+            _cacheManager = new MediatRCacheManager();
         }
 
         public async Task<bool> TryNavigateToHandlerAsync(INamedTypeSymbol requestTypeSymbol)
@@ -43,6 +62,9 @@ namespace VSIXExtention
                 {
                     return false;
                 }
+
+                // Load persistent cache if not already loaded
+                await EnsureCacheLoadedAsync(workspace.CurrentSolution);
 
                 var requestInfo = MediatRPatternMatcher.GetRequestInfo(requestTypeSymbol, null);
                 if (requestInfo == null)
@@ -73,6 +95,14 @@ namespace VSIXExtention
                     return _cachedWorkspace;
 
                 _cachedWorkspace = GetVisualStudioWorkspace();
+                
+                // Subscribe to workspace events for cache invalidation
+                if (_cachedWorkspace != null && !_workspaceEventsSubscribed)
+                {
+                    SubscribeToWorkspaceEvents(_cachedWorkspace);
+                    _workspaceEventsSubscribed = true;
+                }
+                
                 return _cachedWorkspace;
             }
         }
@@ -103,72 +133,255 @@ namespace VSIXExtention
             }
         }
 
+        private void SubscribeToWorkspaceEvents(VisualStudioWorkspace workspace)
+        {
+            try
+            {
+                // Subscribe to workspace change events - more selective approach
+                workspace.WorkspaceChanged += OnWorkspaceChanged;
+                
+                // Subscribe to document save events via Running Document Table
+                SubscribeToDocumentSaveEvents();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error subscribing to workspace events: {ex.Message}");
+            }
+        }
+
+        private void SubscribeToDocumentSaveEvents()
+        {
+            try
+            {
+                _runningDocumentTable = _serviceProvider.GetService(typeof(SVsRunningDocumentTable)) as IVsRunningDocumentTable;
+                if (_runningDocumentTable != null)
+                {
+                    var hr = _runningDocumentTable.AdviseRunningDocTableEvents(new DocumentSaveEventHandler(this), out _rdtCookie);
+                    if (hr == VSConstants.S_OK)
+                    {
+                        _rdtEventsSubscribed = true;
+                        System.Diagnostics.Debug.WriteLine("MediatR Extension: Subscribed to document save events");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error subscribing to document save events: {ex.Message}");
+            }
+        }
+
+        private void OnWorkspaceChanged(object sender, WorkspaceChangeEventArgs e)
+        {
+            try
+            {
+                // Only invalidate cache on truly structural changes that affect MediatR handlers
+                switch (e.Kind)
+                {
+                    case WorkspaceChangeKind.SolutionAdded:
+                        // Only clear cache for actual solution structure changes
+                        System.Diagnostics.Debug.WriteLine($"MediatR Extension: Solution structure changed ({e.Kind}), clearing cache");
+                        _cacheManager.ClearCache();
+                        break;
+                        
+                    case WorkspaceChangeKind.SolutionCleared:
+                    case WorkspaceChangeKind.SolutionRemoved:
+                    case WorkspaceChangeKind.SolutionReloaded:
+                        // Solution is closing - save cache before clearing
+                        System.Diagnostics.Debug.WriteLine("MediatR Extension: Solution closing, saving cache");
+                        _ = Task.Run(_cacheManager.SaveCacheAsync);
+                        _cacheManager.ClearCache();
+                        break;
+                        
+                    case WorkspaceChangeKind.ProjectAdded:
+                    case WorkspaceChangeKind.ProjectRemoved:
+                        System.Diagnostics.Debug.WriteLine($"MediatR Extension: Project structure changed ({e.Kind}), clearing cache");
+                        _cacheManager.ClearCache();
+                        break;
+                        
+                    case WorkspaceChangeKind.DocumentAdded:
+                    case WorkspaceChangeKind.DocumentRemoved:
+                        if (IsRelevantDocument(e))
+                        {
+                            System.Diagnostics.Debug.WriteLine($"MediatR Extension: Relevant document {e.Kind}, clearing cache");
+                            _cacheManager.ClearCache();
+                        }
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error handling workspace change: {ex.Message}");
+            }
+        }
+
+        private bool IsRelevantDocument(WorkspaceChangeEventArgs e)
+        {
+            try
+            {
+                var document = e.NewSolution?.GetDocument(e.DocumentId) ?? e.OldSolution?.GetDocument(e.DocumentId);
+                if (document?.FilePath == null) return false;
+                
+                return CouldContainMediatRPatterns(document.FilePath);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        internal async void OnDocumentSaved(string filePath)
+        {
+            try
+            {
+                if (!CouldContainMediatRPatterns(filePath)) return;
+                
+                System.Diagnostics.Debug.WriteLine($"MediatR Extension: Document saved: {filePath}");
+                await UpdateCacheForSavedDocument(filePath);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error handling document save: {ex.Message}");
+            }
+        }
+
+        private bool CouldContainMediatRPatterns(string filePath)
+        {
+            if (string.IsNullOrEmpty(filePath)) return false;
+            
+            // Only scan C# files
+            if (!filePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)) return false;
+            
+            // Quick heuristic based on file name - likely to contain handlers/requests
+            var fileName = System.IO.Path.GetFileName(filePath).ToLowerInvariant();
+            return fileName.Contains("handler") || 
+                   fileName.Contains("request") || 
+                   fileName.Contains("command") || 
+                   fileName.Contains("query") || 
+                   fileName.Contains("notification");
+        }
+
+        private async Task UpdateCacheForSavedDocument(string filePath)
+        {
+            try
+            {
+                var workspace = GetOrCreateWorkspace();
+                if (workspace?.CurrentSolution == null) return;
+
+                var documentIds = workspace.CurrentSolution.GetDocumentIdsWithFilePath(filePath);
+                if (!documentIds.Any()) return;
+
+                var document = workspace.CurrentSolution.GetDocument(documentIds.First());
+                if (document == null) return;
+
+                var newHandlers = await ScanDocumentForHandlers(document);
+                if (newHandlers.Any())
+                {
+                    _cacheManager.UpdateCacheWithHandlers(newHandlers);
+                    System.Diagnostics.Debug.WriteLine($"MediatR Extension: Updated cache with {newHandlers.Count} handlers from {filePath}");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error updating cache for saved document: {ex.Message}");
+            }
+        }
+
+        private async Task<List<MediatRPatternMatcher.MediatRHandlerInfo>> ScanDocumentForHandlers(Document document)
+        {
+            var handlers = new List<MediatRPatternMatcher.MediatRHandlerInfo>();
+            
+            try
+            {
+                var compilation = await GetOrCreateCompilationAsync(document.Project);
+                if (compilation == null) return handlers;
+
+                var syntaxTree = await document.GetSyntaxTreeAsync();
+                if (syntaxTree == null) return handlers;
+
+                // Scan for both request handlers and notification handlers
+                var requestHandlers = await ProcessSyntaxTreeForHandlers(compilation, syntaxTree, "", false);
+                var notificationHandlers = await ProcessSyntaxTreeForHandlers(compilation, syntaxTree, "", true);
+                
+                handlers.AddRange(requestHandlers);
+                handlers.AddRange(notificationHandlers);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error scanning document for handlers: {ex.Message}");
+            }
+            
+            return handlers;
+        }
+
         private async Task<List<MediatRPatternMatcher.MediatRHandlerInfo>> FindHandlersWithCaching(
             Solution solution, 
             MediatRPatternMatcher.MediatRRequestInfo requestInfo)
         {
             var requestTypeName = requestInfo.RequestTypeName;
-            var cacheKey = $"{requestTypeName}_{requestInfo.IsNotification}";
-
-            // Check cache first
-            if (_handlerCache.TryGetValue(cacheKey, out var cachedHandlers) && 
-                DateTime.Now - _lastCacheUpdate < _cacheValidityPeriod)
+            
+            System.Diagnostics.Debug.WriteLine($"MediatR Extension: Looking for handlers for {requestTypeName} (IsNotification: {requestInfo.IsNotification})");
+            
+            // Try to get from cache first
+            var cachedHandlers = _cacheManager.GetCachedHandlers(requestTypeName);
+            if (cachedHandlers != null)
             {
+                System.Diagnostics.Debug.WriteLine($"MediatR Extension: Found {cachedHandlers.Count} cached handlers for {requestTypeName}");
                 return cachedHandlers;
             }
-
-            // Find handlers with optimized search
+            
+            System.Diagnostics.Debug.WriteLine($"MediatR Extension: No cached handlers found, scanning solution for {requestTypeName}");
+            
+            // Not in cache, find them and cache the result
             var handlers = await FindHandlersOptimized(solution, requestInfo);
             
-            // Update cache
-            _handlerCache.AddOrUpdate(cacheKey, handlers, (key, old) => handlers);
-            _lastCacheUpdate = DateTime.Now;
-
+            _cacheManager.CacheHandlers(requestTypeName, handlers);
+            
+            System.Diagnostics.Debug.WriteLine($"MediatR Extension: Found and cached {handlers.Count} handlers for {requestTypeName}");
             return handlers;
         }
+
+
 
         private async Task<List<MediatRPatternMatcher.MediatRHandlerInfo>> FindHandlersOptimized(
             Solution solution, 
             MediatRPatternMatcher.MediatRRequestInfo requestInfo)
         {
-            var requestTypeName = requestInfo.RequestTypeName;
-            
-            // Filter projects to only those likely to contain handlers (performance optimization)
-            var relevantProjects = solution.Projects
-                .Where(p => p.SupportsCompilation && 
-                           p.Language == LanguageNames.CSharp &&
-                           !IsTestProject(p.Name))
-                .ToList();
+            var handlers = new List<MediatRPatternMatcher.MediatRHandlerInfo>();
 
-            if (!relevantProjects.Any())
-                return new List<MediatRPatternMatcher.MediatRHandlerInfo>();
-
-            // Process projects in parallel for better performance
-            var tasks = relevantProjects.Select(async project =>
+            try
             {
-                try
+                foreach (var project in solution.Projects)
                 {
+                    // Skip test projects for better performance
+                    if (IsTestProject(project.Name)) continue;
+
                     var compilation = await GetOrCreateCompilationAsync(project);
-                    if (compilation == null) return new List<MediatRPatternMatcher.MediatRHandlerInfo>();
+                    if (compilation == null) continue;
 
-                    return requestInfo.IsNotification 
-                        ? await FindNotificationHandlersInProjectOptimized(compilation, requestTypeName)
-                        : await FindHandlersInProjectOptimized(compilation, requestTypeName);
+                    List<MediatRPatternMatcher.MediatRHandlerInfo> projectHandlers;
+                    
+                    if (requestInfo.IsNotification)
+                    {
+                        projectHandlers = await FindNotificationHandlersInProjectOptimized(compilation, requestInfo.RequestTypeName);
+                    }
+                    else
+                    {
+                        projectHandlers = await FindHandlersInProjectOptimized(compilation, requestInfo.RequestTypeName);
+                    }
+                    
+                    handlers.AddRange(projectHandlers);
                 }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"Error processing project {project.Name}: {ex.Message}");
-                    return new List<MediatRPatternMatcher.MediatRHandlerInfo>();
-                }
-            });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error finding handlers: {ex.Message}");
+            }
 
-            var results = await Task.WhenAll(tasks);
-            return results.SelectMany(handlers => handlers).ToList();
+            return handlers;
         }
 
         private async Task<Compilation> GetOrCreateCompilationAsync(Project project)
         {
-            // Use cached compilation if available
             if (_compilationCache.TryGetValue(project.Id, out var cachedCompilation))
                 return cachedCompilation;
 
@@ -177,16 +390,13 @@ namespace VSIXExtention
             {
                 _compilationCache.TryAdd(project.Id, compilation);
             }
-
             return compilation;
         }
 
         private static bool IsTestProject(string projectName)
         {
-            // Skip test projects for better performance (they rarely contain handlers)
-            var testIndicators = new[] { "test", "tests", "spec", "specs", "unittest", "integrationtest" };
             var lowerName = projectName.ToLowerInvariant();
-            return testIndicators.Any(indicator => lowerName.Contains(indicator));
+            return lowerName.Contains("test") || lowerName.Contains("spec") || lowerName.Contains("unit");
         }
 
         private async Task<List<MediatRPatternMatcher.MediatRHandlerInfo>> FindHandlersInProjectOptimized(
@@ -195,26 +405,10 @@ namespace VSIXExtention
         {
             var handlers = new List<MediatRPatternMatcher.MediatRHandlerInfo>();
 
-            // Process syntax trees in parallel for large projects
-            var syntaxTrees = compilation.SyntaxTrees.ToList();
-            
-            if (syntaxTrees.Count <= 5)
+            foreach (var syntaxTree in compilation.SyntaxTrees)
             {
-                // For small projects, process sequentially to avoid overhead
-                foreach (var syntaxTree in syntaxTrees)
-                {
-                    var treeHandlers = await ProcessSyntaxTreeForHandlers(compilation, syntaxTree, requestTypeName, false);
-                    handlers.AddRange(treeHandlers);
-                }
-            }
-            else
-            {
-                // For larger projects, process in parallel
-                var tasks = syntaxTrees.Select(syntaxTree => 
-                    ProcessSyntaxTreeForHandlers(compilation, syntaxTree, requestTypeName, false));
-                
-                var results = await Task.WhenAll(tasks);
-                handlers.AddRange(results.SelectMany(h => h));
+                var treeHandlers = await ProcessSyntaxTreeForHandlers(compilation, syntaxTree, requestTypeName, false);
+                handlers.AddRange(treeHandlers);
             }
 
             return handlers;
@@ -226,23 +420,10 @@ namespace VSIXExtention
         {
             var handlers = new List<MediatRPatternMatcher.MediatRHandlerInfo>();
 
-            var syntaxTrees = compilation.SyntaxTrees.ToList();
-            
-            if (syntaxTrees.Count <= 5)
+            foreach (var syntaxTree in compilation.SyntaxTrees)
             {
-                foreach (var syntaxTree in syntaxTrees)
-                {
-                    var treeHandlers = await ProcessSyntaxTreeForHandlers(compilation, syntaxTree, notificationTypeName, true);
-                    handlers.AddRange(treeHandlers);
-                }
-            }
-            else
-            {
-                var tasks = syntaxTrees.Select(syntaxTree => 
-                    ProcessSyntaxTreeForHandlers(compilation, syntaxTree, notificationTypeName, true));
-                
-                var results = await Task.WhenAll(tasks);
-                handlers.AddRange(results.SelectMany(h => h));
+                var treeHandlers = await ProcessSyntaxTreeForHandlers(compilation, syntaxTree, notificationTypeName, true);
+                handlers.AddRange(treeHandlers);
             }
 
             return handlers;
@@ -255,35 +436,44 @@ namespace VSIXExtention
             bool isNotificationHandler)
         {
             var handlers = new List<MediatRPatternMatcher.MediatRHandlerInfo>();
-            
+
             try
             {
                 var semanticModel = compilation.GetSemanticModel(syntaxTree);
                 var root = await syntaxTree.GetRootAsync();
 
-                // Quick pre-filter: check if file might contain handlers before expensive operations
-                var sourceText = await syntaxTree.GetTextAsync();
-                var text = sourceText.ToString();
-                
-                // Fast text-based check to avoid parsing files that definitely don't contain handlers
-                if (!text.Contains("IRequestHandler") && !text.Contains("INotificationHandler"))
-                    return handlers;
+                var classDeclarations = root.DescendantNodes().OfType<Microsoft.CodeAnalysis.CSharp.Syntax.ClassDeclarationSyntax>().ToList();
+                System.Diagnostics.Debug.WriteLine($"MediatR Extension: Processing {syntaxTree.FilePath} - found {classDeclarations.Count} classes");
 
-                var classDeclarations = root.DescendantNodes().OfType<Microsoft.CodeAnalysis.CSharp.Syntax.ClassDeclarationSyntax>();
-
-                foreach (var classDecl in classDeclarations)
+                foreach (var classDeclaration in classDeclarations)
                 {
-                    var typeSymbol = semanticModel.GetDeclaredSymbol(classDecl) as INamedTypeSymbol;
-                    if (typeSymbol == null) continue;
+                    var classSymbol = semanticModel.GetDeclaredSymbol(classDeclaration) as INamedTypeSymbol;
+                    if (classSymbol == null) continue;
 
-                    var handlerInfo = MediatRPatternMatcher.GetHandlerInfo(typeSymbol, semanticModel);
-                    if (handlerInfo == null) continue;
-
-                    // Match the handler type and target type
-                    if (handlerInfo.IsNotificationHandler == isNotificationHandler && 
-                        handlerInfo.RequestTypeName == targetTypeName)
+                    var handlerInfo = MediatRPatternMatcher.GetHandlerInfo(classSymbol, semanticModel);
+                    if (handlerInfo != null)
                     {
-                        handlers.Add(handlerInfo);
+                        System.Diagnostics.Debug.WriteLine($"MediatR Extension: Found handler {handlerInfo.HandlerTypeName} for {handlerInfo.RequestTypeName} (IsNotification: {handlerInfo.IsNotificationHandler})");
+                        
+                        if (handlerInfo.IsNotificationHandler == isNotificationHandler)
+                        {
+                            // If we're scanning for a specific type, filter by it
+                            // If targetTypeName is empty, we want all handlers of this type
+                            if (!string.IsNullOrEmpty(targetTypeName) && 
+                                !handlerInfo.RequestTypeName.Equals(targetTypeName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                System.Diagnostics.Debug.WriteLine($"MediatR Extension: Skipping handler {handlerInfo.HandlerTypeName} - looking for {targetTypeName}, found {handlerInfo.RequestTypeName}");
+                                continue;
+                            }
+
+                            handlerInfo.Location = classDeclaration.GetLocation();
+                            handlers.Add(handlerInfo);
+                            System.Diagnostics.Debug.WriteLine($"MediatR Extension: Added handler {handlerInfo.HandlerTypeName} for {handlerInfo.RequestTypeName}");
+                        }
+                        else
+                        {
+                            System.Diagnostics.Debug.WriteLine($"MediatR Extension: Skipping handler {handlerInfo.HandlerTypeName} - wrong type (looking for notification: {isNotificationHandler}, found: {handlerInfo.IsNotificationHandler})");
+                        }
                     }
                 }
             }
@@ -292,6 +482,7 @@ namespace VSIXExtention
                 System.Diagnostics.Debug.WriteLine($"Error processing syntax tree {syntaxTree.FilePath}: {ex.Message}");
             }
 
+            System.Diagnostics.Debug.WriteLine($"MediatR Extension: Found {handlers.Count} matching handlers in {syntaxTree.FilePath}");
             return handlers;
         }
 
@@ -301,35 +492,63 @@ namespace VSIXExtention
         {
             if (!handlers.Any())
             {
+                System.Diagnostics.Debug.WriteLine("No MediatR handlers found.");
                 return false;
             }
 
             if (handlers.Count == 1)
             {
-                return await NavigateToLocationAsync(handlers.First().Location);
+                return await NavigateToLocationAsync(handlers[0].Location);
             }
 
-            return await NavigateToMultipleHandlersAsync(handlers, isNotification);
+            var result = await NavigateToMultipleHandlersAsync(handlers, isNotification);
+            
+            // Handle cancellation vs failure differently
+            if (result == null) // Cancellation
+            {
+                return true; // Don't show error for cancellation
+            }
+            
+            if (result == false) // Failure
+            {
+                System.Diagnostics.Debug.WriteLine("No MediatR handlers found.");
+            }
+            
+            return result ?? false;
         }
 
-        private async Task<bool> NavigateToMultipleHandlersAsync(
+        private async Task<bool?> NavigateToMultipleHandlersAsync(
             List<MediatRPatternMatcher.MediatRHandlerInfo> handlers, 
             bool isNotification)
         {
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-
             try
             {
-                var handlerNames = handlers.Select(h => h.HandlerTypeName).ToArray();
-                var selectedHandler = ShowHandlerSelectionDialog(handlerNames, isNotification);
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                if (string.IsNullOrEmpty(selectedHandler))
+                var handlerDisplayInfo = handlers.Select(h => new HandlerDisplayInfo
                 {
-                    return false;
+                    Handler = h,
+                    DisplayText = FormatHandlerDisplayText(h)
+                }).ToArray();
+
+                var handlerNames = handlerDisplayInfo.Select(hdi => hdi.DisplayText).ToArray();
+                string handlerType = isNotification ? "notification handler" : "handler";
+                string message = $"Multiple {handlerType}s found. Please select one:";
+
+                var selectedHandlerName = ShowHandlerSelectionDialog(handlerDisplayInfo, isNotification);
+                
+                if (selectedHandlerName == null)
+                {
+                    return null; // User cancelled
                 }
 
-                var handler = handlers.FirstOrDefault(h => h.HandlerTypeName == selectedHandler);
-                return handler != null && await NavigateToLocationAsync(handler.Location);
+                var selectedHandler = handlerDisplayInfo.FirstOrDefault(hdi => hdi.DisplayText == selectedHandlerName)?.Handler;
+                if (selectedHandler != null)
+                {
+                    return await NavigateToLocationAsync(selectedHandler.Location);
+                }
+
+                return false;
             }
             catch (Exception ex)
             {
@@ -338,185 +557,224 @@ namespace VSIXExtention
             }
         }
 
-        private string ShowHandlerSelectionDialog(string[] handlerNames, bool isNotification)
+        private string FormatHandlerDisplayText(MediatRPatternMatcher.MediatRHandlerInfo handler)
         {
             try
             {
-                var handlerType = isNotification ? "notification handlers" : "request handlers";
-                var message = $"Multiple {handlerType} found. Select one to navigate to:";
-                
-                using (var dialog = new HandlerSelectionDialog(message, handlerNames))
+                var filePath = handler.Location?.SourceTree?.FilePath;
+                if (string.IsNullOrEmpty(filePath))
                 {
-                    var result = dialog.ShowDialog();
-                    return result == DialogResult.OK ? dialog.SelectedHandler : null;
+                    return handler.HandlerTypeName;
                 }
+
+                // Extract last 2-3 folders for context
+                var pathParts = filePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+                if (pathParts.Length <= 2)
+                {
+                    return $"{handler.HandlerTypeName} ({string.Join("/", pathParts)})";
+                }
+
+                var relevantParts = pathParts.Skip(Math.Max(0, pathParts.Length - 3)).ToArray();
+                return $"{handler.HandlerTypeName} ({string.Join("/", relevantParts)})";
             }
-            catch (Exception ex)
+            catch
             {
-                System.Diagnostics.Debug.WriteLine($"Error showing selection dialog: {ex.Message}");
-                return handlerNames.FirstOrDefault();
+                return handler.HandlerTypeName;
             }
+        }
+
+        private string ShowHandlerSelectionDialog(HandlerDisplayInfo[] handlerDisplayInfo, bool isNotification)
+        {
+            string handlerType = isNotification ? "notification handler" : "handler";
+            string message = $"Multiple {handlerType}s found. Please select one:";
+            
+            var handlerNames = handlerDisplayInfo.Select(hdi => hdi.DisplayText).ToArray();
+            var dialog = new HandlerSelectionDialog(message, handlerNames);
+            
+            // Use ShowModal() for DialogWindow
+            var result = dialog.ShowModal();
+            if (result != true)
+            {
+                return null; // User cancelled or dialog failed
+            }
+            
+            return dialog.SelectedHandler;
         }
 
         private async Task<bool> NavigateToLocationAsync(Location location)
         {
-            if (location?.SourceTree == null)
-                return false;
-
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-
-            try
+            if (location?.SourceTree?.FilePath == null)
             {
-                var filePath = location.SourceTree.FilePath;
-                var linePosition = location.GetLineSpan().StartLinePosition;
-
-                return await OpenDocumentAndNavigate(filePath, linePosition);
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"Error opening document: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine("MediatR Navigation: Location or FilePath is null");
                 return false;
             }
+
+            var lineSpan = location.GetLineSpan();
+            System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Navigating to {location.SourceTree.FilePath} at line {lineSpan.StartLinePosition.Line + 1}");
+            var result = await OpenDocumentAndNavigate(location.SourceTree.FilePath, lineSpan.StartLinePosition);
+            System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Navigation result: {result}");
+            return result;
         }
 
         private async Task<bool> OpenDocumentAndNavigate(string filePath, Microsoft.CodeAnalysis.Text.LinePosition linePosition)
         {
-            var shell = (IVsUIShellOpenDocument)_serviceProvider.GetService(typeof(SVsUIShellOpenDocument));
-            if (shell == null)
+            try
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                
+                System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Attempting to open file: {filePath} at line {linePosition.Line + 1}");
+
+                var dte = _serviceProvider.GetService(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
+                if (dte?.ItemOperations == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("MediatR Navigation: Failed to get DTE or ItemOperations");
+                    return false;
+                }
+
+                var window = dte.ItemOperations.OpenFile(filePath);
+                if (window?.Document?.Object("TextDocument") is EnvDTE.TextDocument textDocument)
+                {
+                    var selection = textDocument.Selection;
+                    selection.MoveToLineAndOffset(linePosition.Line + 1, linePosition.Character + 1, false);
+                    System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Successfully navigated to {filePath} at line {linePosition.Line + 1}");
+                    return true;
+                }
+                
+                // Alternative approach if the above fails
+                if (window?.Document != null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Trying alternative approach for {filePath}");
+                    var document = window.Document;
+                    var altTextDocument = document.Object("TextDocument") as EnvDTE.TextDocument;
+                    if (altTextDocument != null)
+                    {
+                        var selection = altTextDocument.Selection;
+                        selection.MoveToLineAndOffset(linePosition.Line + 1, linePosition.Character + 1, false);
+                        System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Successfully navigated to {filePath} at line {linePosition.Line + 1} (alternative approach)");
+                        return true;
+                    }
+                }
+
+                System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Failed to get TextDocument from window for {filePath}");
                 return false;
-
-            var hr = shell.OpenDocumentViaProject(
-                filePath,
-                VSConstants.LOGVIEWID_Code,
-                out _,
-                out _,
-                out _,
-                out var windowFrame);
-
-            if (hr != VSConstants.S_OK || windowFrame == null)
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Error opening document {filePath}: {ex.Message}");
                 return false;
-
-            windowFrame.Show();
-
-            return await NavigateToPosition(windowFrame, linePosition);
+            }
         }
 
-        private async Task<bool> NavigateToPosition(IVsWindowFrame windowFrame, Microsoft.CodeAnalysis.Text.LinePosition linePosition)
-        {
-            var hr = windowFrame.GetProperty((int)__VSFPROPID.VSFPROPID_DocData, out var docData);
-            if (hr != VSConstants.S_OK || !(docData is IVsTextBuffer textBuffer))
-                return false;
-
-            var textManager = (IVsTextManager)_serviceProvider.GetService(typeof(SVsTextManager));
-            textManager?.NavigateToLineAndColumn(
-                textBuffer,
-                VSConstants.LOGVIEWID_Code,
-                linePosition.Line,
-                linePosition.Character,
-                linePosition.Line,
-                linePosition.Character);
-
-            return true;
-        }
-
-        // Clear cache when solution changes (call this from appropriate events)
         public void ClearCache()
         {
             _compilationCache.Clear();
-            _handlerCache.Clear();
-            _lastCacheUpdate = DateTime.MinValue;
+            _cacheManager.ClearCache();
+            System.Diagnostics.Debug.WriteLine("MediatR Extension: Caches cleared");
+        }
+
+        public async Task SaveCacheAsync()
+        {
+            await _cacheManager.SaveCacheAsync();
+        }
+
+        private async Task EnsureCacheLoadedAsync(Solution solution)
+        {
+            if (!_cacheManager.IsCacheLoaded)
+            {
+                await _cacheManager.InitializeAsync(solution);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (!_disposed)
+            {
+                try
+                {
+                    // Dispose cache manager first
+                    _cacheManager?.Dispose();
+
+                    // Unsubscribe from workspace events
+                    if (_cachedWorkspace != null && _workspaceEventsSubscribed)
+                    {
+                        _cachedWorkspace.WorkspaceChanged -= OnWorkspaceChanged;
+                    }
+                    
+                    // Unsubscribe from document save events
+                    if (_runningDocumentTable != null && _rdtEventsSubscribed)
+                    {
+                        _runningDocumentTable.UnadviseRunningDocTableEvents(_rdtCookie);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Error during MediatRNavigationService disposal: {ex.Message}");
+                }
+                finally
+                {
+                    _disposed = true;
+                    _compilationCache.Clear();
+                }
+            }
         }
     }
 
-    public class HandlerSelectionDialog : Form
+    internal class DocumentSaveEventHandler : IVsRunningDocTableEvents
     {
-        public string SelectedHandler { get; private set; }
+        private readonly MediatRNavigationService _service;
 
-        public HandlerSelectionDialog(string message, string[] handlerNames)
+        public DocumentSaveEventHandler(MediatRNavigationService service)
         {
-            InitializeDialog(message, handlerNames);
+            _service = service;
         }
 
-        private void InitializeDialog(string message, string[] handlerNames)
+        public int OnAfterFirstDocumentLock(uint docCookie, uint dwRDTLockType, uint dwReadLocksRemaining, uint dwEditLocksRemaining)
         {
-            Text = "Select MediatR Handler";
-            Size = new Size(400, 300);
-            StartPosition = FormStartPosition.CenterParent;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            MinimizeBox = false;
-
-            var label = CreateLabel(message);
-            var listBox = CreateListBox(handlerNames);
-            var (okButton, cancelButton) = CreateButtons();
-
-            SetupEventHandlers(listBox, okButton);
-
-            Controls.AddRange(new Control[] { label, listBox, okButton, cancelButton });
-
-            AcceptButton = okButton;
-            CancelButton = cancelButton;
+            return VSConstants.S_OK;
         }
 
-        private Label CreateLabel(string message)
+        public int OnBeforeLastDocumentUnlock(uint docCookie, uint dwRDTLockType, uint dwReadLocksRemaining, uint dwEditLocksRemaining)
         {
-            return new Label
+            return VSConstants.S_OK;
+        }
+
+        public int OnAfterSave(uint docCookie)
+        {
+            try
             {
-                Text = message,
-                Location = new Point(10, 10),
-                Size = new Size(370, 30),
-                AutoSize = false
-            };
-        }
-
-        private ListBox CreateListBox(string[] handlerNames)
-        {
-            var listBox = new ListBox
+                var runningDocTable = _service._runningDocumentTable;
+                if (runningDocTable != null)
+                {
+                    runningDocTable.GetDocumentInfo(docCookie, out _, out _, out _, out var docPath, out _, out _, out _);
+                    if (!string.IsNullOrEmpty(docPath))
+                    {
+                        _service.OnDocumentSaved(docPath);
+                    }
+                }
+            }
+            catch (Exception ex)
             {
-                Location = new Point(10, 50),
-                Size = new Size(370, 150)
-            };
+                System.Diagnostics.Debug.WriteLine($"Error in OnAfterSave: {ex.Message}");
+            }
             
-            listBox.Items.AddRange(handlerNames);
-            listBox.SelectedIndex = 0;
-
-            return listBox;
+            return VSConstants.S_OK;
         }
 
-        private (Button okButton, Button cancelButton) CreateButtons()
+        public int OnAfterAttributeChange(uint docCookie, uint grfAttribs)
         {
-            var okButton = new Button
-            {
-                Text = "OK",
-                Location = new Point(225, 220),
-                Size = new Size(75, 23),
-                DialogResult = DialogResult.OK
-            };
-
-            var cancelButton = new Button
-            {
-                Text = "Cancel",
-                Location = new Point(305, 220),
-                Size = new Size(75, 23),
-                DialogResult = DialogResult.Cancel
-            };
-
-            return (okButton, cancelButton);
+            return VSConstants.S_OK;
         }
 
-        private void SetupEventHandlers(ListBox listBox, Button okButton)
+        public int OnBeforeDocumentWindowShow(uint docCookie, int fFirstShow, IVsWindowFrame pFrame)
         {
-            okButton.Click += (s, e) => {
-                SelectedHandler = listBox.SelectedItem?.ToString();
-                DialogResult = DialogResult.OK;
-                Close();
-            };
+            return VSConstants.S_OK;
+        }
 
-            listBox.DoubleClick += (s, e) => {
-                SelectedHandler = listBox.SelectedItem?.ToString();
-                DialogResult = DialogResult.OK;
-                Close();
-            };
+        public int OnAfterDocumentWindowHide(uint docCookie, IVsWindowFrame pFrame)
+        {
+            return VSConstants.S_OK;
         }
     }
+
+
 } 

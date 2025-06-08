@@ -373,6 +373,25 @@ namespace VSIXExtention
                 System.Windows.Forms.MessageBoxIcon.Information);
         }
 
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                try
+                {
+                    // Dispose the MediatR provider to save cache
+                    _goToImplementationProvider?.Dispose();
+                    System.Diagnostics.Debug.WriteLine("MediatR Extension: Package disposed, provider disposed");
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatR Extension: Error disposing provider: {ex.Message}");
+                }
+            }
+            
+            base.Dispose(disposing);
+        }
+
         #endregion
     }
 }
