@@ -1,19 +1,15 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Drawing;
 using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
-using System.Windows.Forms;
 using Microsoft.CodeAnalysis;
 using Microsoft.VisualStudio;
 using Microsoft.VisualStudio.ComponentModelHost;
 using Microsoft.VisualStudio.LanguageServices;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
-using Microsoft.VisualStudio.TextManager.Interop;
-using Newtonsoft.Json;
+using Microsoft.VisualStudio.Threading;
 
 namespace VSIXExtention
 {
@@ -186,10 +182,13 @@ namespace VSIXExtention
                     case WorkspaceChangeKind.SolutionCleared:
                     case WorkspaceChangeKind.SolutionRemoved:
                     case WorkspaceChangeKind.SolutionReloaded:
-                        // Solution is closing - save cache before clearing
+                        // Solution is closing - save cache but don't clear it (we want to preserve it)
                         System.Diagnostics.Debug.WriteLine("MediatR Extension: Solution closing, saving cache");
-                        _ = Task.Run(_cacheManager.SaveCacheAsync);
-                        _cacheManager.ClearCache();
+                        _ = Task.Run(async () =>
+                        {
+                            await _cacheManager.SaveCacheAsync();
+                            System.Diagnostics.Debug.WriteLine("MediatR Extension: Cache saved on solution close");
+                        });
                         break;
                         
                     case WorkspaceChangeKind.ProjectAdded:
@@ -229,7 +228,7 @@ namespace VSIXExtention
             }
         }
 
-        internal async void OnDocumentSaved(string filePath)
+        internal async Task OnDocumentSaved(string filePath)
         {
             try
             {
@@ -748,7 +747,7 @@ namespace VSIXExtention
                     runningDocTable.GetDocumentInfo(docCookie, out _, out _, out _, out var docPath, out _, out _, out _);
                     if (!string.IsNullOrEmpty(docPath))
                     {
-                        _service.OnDocumentSaved(docPath);
+                        _service.OnDocumentSaved(docPath).RunSynchronously();
                     }
                 }
             }

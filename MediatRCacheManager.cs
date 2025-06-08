@@ -5,7 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.VisualStudio.Threading;
 using Newtonsoft.Json;
 
 namespace VSIXExtention
@@ -103,18 +103,7 @@ namespace VSIXExtention
             System.Diagnostics.Debug.WriteLine("MediatR Cache: Cache cleared");
         }
 
-        public async Task ClearAndSmartRebuildCache(Solution solution, Func<Solution, List<string>, Task> rebuildFunc)
-        {
-            var recentRequestTypes = GetRecentlyUsedRequestTypes();
-            
-            ClearCache();
-            
-            if (recentRequestTypes.Any())
-            {
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Smart rebuilding cache for {recentRequestTypes.Count} recently used types");
-                _ = Task.Run(() => rebuildFunc(solution, recentRequestTypes));
-            }
-        }
+
 
         public List<string> GetRecentlyUsedRequestTypes()
         {
@@ -284,13 +273,18 @@ namespace VSIXExtention
                     CacheVersion = "1.0"
                 };
 
-                // Convert handler cache to serializable format
+                // Convert handler cache to serializable format, but only save recent ones
+                var recentRequestTypes = GetRecentlyUsedRequestTypes();
                 foreach (var kvp in _handlerCache.ToList())
                 {
-                    var serializableHandlers = kvp.Value.Select(ConvertToSerializable).Where(h => h != null).ToList();
-                    if (serializableHandlers.Any())
+                    // Only save handlers for recently used request types
+                    if (recentRequestTypes.Contains(kvp.Key))
                     {
-                        cacheData.HandlerCache[kvp.Key] = serializableHandlers;
+                        var serializableHandlers = kvp.Value.Select(ConvertToSerializable).Where(h => h != null).ToList();
+                        if (serializableHandlers.Any())
+                        {
+                            cacheData.HandlerCache[kvp.Key] = serializableHandlers;
+                        }
                     }
                 }
 
@@ -313,6 +307,9 @@ namespace VSIXExtention
                 }
 
                 System.Diagnostics.Debug.WriteLine($"MediatR Cache: Saved cache with {cacheData.HandlerCache.Count} handler types to {_cacheFilePath}");
+                System.Diagnostics.Debug.WriteLine($"MediatR Cache: In-memory cache has {_handlerCache.Count} types: [{string.Join(", ", _handlerCache.Keys)}]");
+                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Recent types: [{string.Join(", ", recentRequestTypes)}]");
+                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Saved types: [{string.Join(", ", cacheData.HandlerCache.Keys)}]");
             }
             catch (Exception ex)
             {

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
     <Metadata>
-        <Identity Id="MediatRNavigationExtension.38878949-742f-44c0-aec9-643fa3fbb5bc" Version="1.0" Language="en-US" Publisher="Yurii Chornyi" />
+        <Identity Id="MediatRNavigationExtension.38878949-742f-44c0-aec9-643fa3fbb5bc" Version="2.0" Language="en-US" Publisher="Yurii Chornyi" />
         <DisplayName>MediatR Navigation Extension</DisplayName>
         <Description xml:space="preserve">Navigate from MediatR requests, commands, queries, and notifications to their corresponding handlers with "Go to MediatR Implementation" command.</Description>
         <License>LICENSE.txt</License>

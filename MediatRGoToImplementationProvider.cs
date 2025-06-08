@@ -43,7 +43,7 @@ namespace VSIXExtention
                 if (workspace?.CurrentSolution == null)
                     return false;
 
-                var document = await GetDocumentAsync(textView, workspace);
+                var document = GetDocument(textView, workspace);
                 if (document == null)
                     return false;
 
@@ -73,7 +73,7 @@ namespace VSIXExtention
                 return false;
 
             var filePath = GetFilePathFromTextBuffer(textBuffer);
-            
+
             // Only process C# files
             if (string.IsNullOrEmpty(filePath) || !filePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
                 return false;
@@ -112,7 +112,7 @@ namespace VSIXExtention
         private VisualStudioWorkspace GetVisualStudioWorkspace()
         {
             // Try methods in order of likelihood to succeed (most common first)
-            
+
             // Method 1: Through global service provider (most reliable)
             var workspace = Package.GetGlobalService(typeof(VisualStudioWorkspace)) as VisualStudioWorkspace;
             if (workspace != null)
@@ -135,10 +135,10 @@ namespace VSIXExtention
             }
         }
 
-        private async Task<Document> GetDocumentAsync(ITextView textView, VisualStudioWorkspace workspace)
+        private Document GetDocument(ITextView textView, VisualStudioWorkspace workspace)
         {
             var filePath = GetFilePathFromTextBuffer(textView.TextBuffer);
-            
+
             // Use faster method to get document if available
             var documentIds = workspace.CurrentSolution.GetDocumentIdsWithFilePath(filePath);
             if (!documentIds.Any())
@@ -158,7 +158,7 @@ namespace VSIXExtention
 
             var textSpan = GetTextSpan(textView, position);
             var root = await syntaxTree.GetRootAsync();
-            
+
             // Find the most specific node first
             var node = root.FindNode(textSpan, getInnermostNodeForTie: true);
 
@@ -225,6 +225,8 @@ namespace VSIXExtention
                 if (textBuffer.Properties.TryGetProperty<Microsoft.VisualStudio.TextManager.Interop.IVsTextBuffer>(
                     typeof(Microsoft.VisualStudio.TextManager.Interop.IVsTextBuffer), out var vsTextBuffer))
                 {
+                    ThreadHelper.ThrowIfNotOnUIThread();
+
                     if (vsTextBuffer is Microsoft.VisualStudio.Shell.Interop.IPersistFileFormat persistFileFormat)
                     {
                         persistFileFormat.GetCurFile(out var filePath, out _);

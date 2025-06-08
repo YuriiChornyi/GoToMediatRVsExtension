@@ -65,7 +65,7 @@ namespace VSIXExtention
         protected override async Task InitializeAsync(CancellationToken cancellationToken, IProgress<ServiceProgressData> progress)
         {
             System.Diagnostics.Debug.WriteLine("MediatR Extension: Starting initialization...");
-            
+
             // When initialized asynchronously, the current thread may be a background thread at this point.
             // Do any initialization that requires the UI thread after switching to the UI thread.
             await this.JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
@@ -79,40 +79,40 @@ namespace VSIXExtention
             {
                 var menuCommandID = new CommandID(CommandSet, GoToMediatRImplementationCommandId);
                 var menuItem = new OleMenuCommand(ExecuteGoToImplementation, menuCommandID);
-                
+
                 // Set initial state
                 menuItem.Visible = true;
                 menuItem.Enabled = true;
                 menuItem.Supported = true;
-                
+
                 menuItem.BeforeQueryStatus += MenuItem_BeforeQueryStatus;
                 commandService.AddCommand(menuItem);
-                
+
                 // Register the test command (always visible in Tools menu)
                 var testMenuCommandID = new CommandID(CommandSet, GoToMediatRImplementationTestCommandId);
                 var testMenuItem = new OleMenuCommand(ExecuteTestCommand, testMenuCommandID);
                 commandService.AddCommand(testMenuItem);
-                
+
                 // Register the context menu command
                 var contextMenuCommandID = new CommandID(CommandSet, GoToMediatRImplementationContextCommandId);
                 var contextMenuItem = new OleMenuCommand(ExecuteGoToImplementation, contextMenuCommandID);
                 contextMenuItem.BeforeQueryStatus += MenuItem_BeforeQueryStatus;
                 commandService.AddCommand(contextMenuItem);
-                
+
                 System.Diagnostics.Debug.WriteLine("MediatR Extension: Commands registered successfully");
             }
             else
             {
                 System.Diagnostics.Debug.WriteLine("MediatR Extension: ERROR - Command service is null!");
             }
-            
+
             System.Diagnostics.Debug.WriteLine("MediatR Extension: Initialization complete");
         }
 
         private async void MenuItem_BeforeQueryStatus(object sender, EventArgs e)
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            
+
             var command = sender as OleMenuCommand;
             if (command == null) return;
 
@@ -120,7 +120,7 @@ namespace VSIXExtention
             {
                 // Check if we're currently on a MediatR request/command
                 bool isMediatRContext = await IsInMediatRContextAsync();
-                
+
                 command.Visible = isMediatRContext;
                 command.Enabled = isMediatRContext;
                 command.Supported = true;
@@ -142,7 +142,7 @@ namespace VSIXExtention
 
                 var textBuffer = textView.TextBuffer;
                 var filePath = GetFilePathFromTextBuffer(textBuffer);
-                
+
                 // Early bailout: Only check C# files
                 if (string.IsNullOrEmpty(filePath) || !filePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
                     return false;
@@ -153,7 +153,7 @@ namespace VSIXExtention
                     var selectionSpan = textView.Selection.SelectedSpans[0];
                     var startLine = textView.TextSnapshot.GetLineFromPosition(selectionSpan.Start.Position);
                     var endLine = textView.TextSnapshot.GetLineFromPosition(selectionSpan.End.Position);
-                    
+
                     // If selection spans multiple lines, unlikely to be a specific class navigation
                     if (endLine.LineNumber > startLine.LineNumber)
                         return false;
@@ -161,16 +161,16 @@ namespace VSIXExtention
 
                 // Try multiple ways to get the workspace
                 VisualStudioWorkspace workspace = null;
-                
+
                 // Method 1: Through our service provider
                 workspace = GetService(typeof(VisualStudioWorkspace)) as VisualStudioWorkspace;
-                
+
                 // Method 2: Through global service provider
                 if (workspace == null)
                 {
                     workspace = Package.GetGlobalService(typeof(VisualStudioWorkspace)) as VisualStudioWorkspace;
                 }
-                
+
                 // Method 3: Through component model
                 if (workspace == null)
                 {
@@ -187,7 +187,7 @@ namespace VSIXExtention
                         // Ignore component model failures
                     }
                 }
-                
+
                 if (workspace?.CurrentSolution == null) return false;
 
                 var documentIds = workspace.CurrentSolution.GetDocumentIdsWithFilePath(filePath);
@@ -273,7 +273,10 @@ namespace VSIXExtention
             {
                 if (textBuffer.Properties.TryGetProperty<Microsoft.VisualStudio.TextManager.Interop.IVsTextBuffer>(typeof(Microsoft.VisualStudio.TextManager.Interop.IVsTextBuffer), out var vsTextBuffer))
                 {
-                    var persistFileFormat = vsTextBuffer as Microsoft.VisualStudio.Shell.Interop.IPersistFileFormat;
+                    ThreadHelper.ThrowIfNotOnUIThread();
+
+                    var persistFileFormat = vsTextBuffer as IPersistFileFormat;
+
                     if (persistFileFormat != null)
                     {
                         persistFileFormat.GetCurFile(out var filePath, out _);
@@ -303,7 +306,7 @@ namespace VSIXExtention
 
                 var componentModel = GetService(typeof(SComponentModel)) as IComponentModel;
                 var editorAdapter = componentModel?.GetService<IVsEditorAdaptersFactoryService>();
-                
+
                 return editorAdapter?.GetWpfTextView(view);
             }
             catch
@@ -388,7 +391,7 @@ namespace VSIXExtention
                     System.Diagnostics.Debug.WriteLine($"MediatR Extension: Error disposing provider: {ex.Message}");
                 }
             }
-            
+
             base.Dispose(disposing);
         }
 
