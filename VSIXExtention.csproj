@@ -99,6 +99,10 @@
 		<PackageReference Include="Microsoft.VisualStudio.Shell.Framework">
 			<Version>17.14.40264</Version>
 		</PackageReference>
+		<PackageReference Include="Microsoft.VisualStudio.Threading">
+			<Version>17.14.15</Version>
+			<PrivateAssets>none</PrivateAssets>
+		</PackageReference>
 		<PackageReference Include="Microsoft.VSSDK.BuildTools" Version="17.14.2094" NoWarn="NU1604">
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 			<PrivateAssets>all</PrivateAssets>

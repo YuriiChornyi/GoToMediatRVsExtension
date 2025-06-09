@@ -1,19 +1,20 @@
 ﻿using System;
+using System.ComponentModel.Design;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
-using Microsoft.VisualStudio.Shell;
-using System.ComponentModel.Design;
 using System.Threading.Tasks;
-using Microsoft.VisualStudio.Text.Editor;
-using Microsoft.VisualStudio.Editor;
-using Microsoft.VisualStudio.TextManager.Interop;
-using Microsoft.VisualStudio.ComponentModelHost;
-using Microsoft.VisualStudio.LanguageServices;
+using Community.VisualStudio.Toolkit;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
-using System.Linq;
+using Microsoft.VisualStudio.ComponentModelHost;
+using Microsoft.VisualStudio.Editor;
+using Microsoft.VisualStudio.LanguageServices;
+using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
+using Microsoft.VisualStudio.Text.Editor;
+using Microsoft.VisualStudio.TextManager.Interop;
 
 namespace VSIXExtention
 {
@@ -324,7 +325,7 @@ namespace VSIXExtention
                 var textView = GetActiveTextView();
                 if (textView == null)
                 {
-                    ShowMessage("No active text view found.", "MediatR Extension");
+                    await ShowMessageAsync("No active text view found.", "MediatR Extension");
                     return;
                 }
 
@@ -345,7 +346,7 @@ namespace VSIXExtention
 
                 if (!success)
                 {
-                    ShowMessage(
+                    await ShowMessageAsync(
                         "Could not find MediatR handler for the current request/command.\n\n" +
                         "Make sure:\n" +
                         "• You're positioned on a MediatR IRequest implementation\n" +
@@ -357,23 +358,21 @@ namespace VSIXExtention
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"MediatR Extension: Error in ExecuteGoToImplementation: {ex.Message}");
-                ShowMessage($"An error occurred: {ex.Message}", "MediatR Extension Error");
+                await ShowMessageAsync($"An error occurred: {ex.Message}", "MediatR Extension Error");
             }
         }
 
         private async void ExecuteTestCommand(object sender, EventArgs e)
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            ShowMessage("MediatR Extension Test Command executed successfully!\n\nThis confirms the extension is loaded and commands are working.", "MediatR Extension Test");
+            await ShowMessageAsync("MediatR Extension Test Command executed successfully!\n\nThis confirms the extension is loaded and commands are working.", "MediatR Extension Test");
         }
 
-        private void ShowMessage(string message, string title)
+        private async Task ShowMessageAsync(string message, string title)
         {
-            System.Windows.Forms.MessageBox.Show(
+            await VS.MessageBox.ShowAsync(
                 message,
-                title,
-                System.Windows.Forms.MessageBoxButtons.OK,
-                System.Windows.Forms.MessageBoxIcon.Information);
+                title);
         }
 
         protected override void Dispose(bool disposing)

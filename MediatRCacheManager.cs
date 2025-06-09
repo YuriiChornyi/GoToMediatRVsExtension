@@ -10,10 +10,24 @@ using Newtonsoft.Json;
 
 namespace VSIXExtention
 {
+    public class CachedHandlerInfo
+    {
+        public MediatRPatternMatcher.MediatRHandlerInfo Handler { get; set; }
+        public DateTime LastUsed { get; set; }
+        public DateTime LastValidated { get; set; }
+
+        public CachedHandlerInfo(MediatRPatternMatcher.MediatRHandlerInfo handler)
+        {
+            Handler = handler;
+            LastUsed = DateTime.Now;
+            LastValidated = DateTime.Now;
+        }
+    }
+
     public class MediatRCacheManager : IDisposable
     {
-        private readonly ConcurrentDictionary<string, List<MediatRPatternMatcher.MediatRHandlerInfo>> _handlerCache 
-            = new ConcurrentDictionary<string, List<MediatRPatternMatcher.MediatRHandlerInfo>>();
+        private readonly ConcurrentDictionary<string, List<CachedHandlerInfo>> _handlerCache 
+            = new ConcurrentDictionary<string, List<CachedHandlerInfo>>();
         
         private readonly ConcurrentDictionary<string, DateTime> _recentlyUsedRequestTypes 
             = new ConcurrentDictionary<string, DateTime>();
@@ -30,8 +44,17 @@ namespace VSIXExtention
         private readonly TimeSpan _periodicSaveInterval = TimeSpan.FromMinutes(2);
         private bool _disposed = false;
 
+        // Reference to navigation service for advanced validation (optional)
+        private readonly WeakReference _navigationServiceRef;
+
+        public MediatRCacheManager(object navigationService = null)
+        {
+            _navigationServiceRef = navigationService != null ? new WeakReference(navigationService) : null;
+        }
+
         public bool IsCacheLoaded => _cacheLoaded;
         public bool IsCacheDirty => _cacheIsDirty;
+        public string CurrentSolutionPath => _currentSolutionPath;
 
         public async Task InitializeAsync(Solution solution)
         {
@@ -49,11 +72,19 @@ namespace VSIXExtention
 
         public List<MediatRPatternMatcher.MediatRHandlerInfo> GetCachedHandlers(string requestTypeName)
         {
-            if (_handlerCache.TryGetValue(requestTypeName, out var handlers))
+            if (_handlerCache.TryGetValue(requestTypeName, out var cachedHandlers))
             {
                 // Track usage for smart rebuilding
                 _recentlyUsedRequestTypes.AddOrUpdate(requestTypeName, DateTime.Now, (_, __) => DateTime.Now);
-                return handlers.ToList();
+                
+                // Update last used time for these handlers
+                var now = DateTime.Now;
+                foreach (var cachedHandler in cachedHandlers)
+                {
+                    cachedHandler.LastUsed = now;
+                }
+                
+                return cachedHandlers.Select(ch => ch.Handler).ToList();
             }
             return null;
         }
@@ -62,7 +93,8 @@ namespace VSIXExtention
         {
             if (handlers?.Any() == true)
             {
-                _handlerCache.AddOrUpdate(requestTypeName, handlers, (_, __) => handlers);
+                var cachedHandlers = handlers.Select(h => new CachedHandlerInfo(h)).ToList();
+                _handlerCache.AddOrUpdate(requestTypeName, cachedHandlers, (_, __) => cachedHandlers);
                 _recentlyUsedRequestTypes.AddOrUpdate(requestTypeName, DateTime.Now, (_, __) => DateTime.Now);
                 _cacheIsDirty = true;
                 System.Diagnostics.Debug.WriteLine($"MediatR Cache: Cached {handlers.Count} handlers for {requestTypeName}");
@@ -79,13 +111,14 @@ namespace VSIXExtention
             {
                 var requestTypeName = group.Key;
                 var handlers = group.ToList();
+                var newCachedHandlers = handlers.Select(h => new CachedHandlerInfo(h)).ToList();
                 
-                _handlerCache.AddOrUpdate(requestTypeName, handlers, (key, existingHandlers) =>
+                _handlerCache.AddOrUpdate(requestTypeName, newCachedHandlers, (key, existingHandlers) =>
                 {
                     // Remove existing handlers with same type name, add new ones
                     var updatedHandlers = existingHandlers
-                        .Where(existing => !handlers.Any(newHandler => newHandler.HandlerTypeName == existing.HandlerTypeName))
-                        .Concat(handlers)
+                        .Where(existing => !handlers.Any(newHandler => newHandler.HandlerTypeName == existing.Handler.HandlerTypeName))
+                        .Concat(newCachedHandlers)
                         .ToList();
                     
                     System.Diagnostics.Debug.WriteLine($"MediatR Cache: Updated cache for {requestTypeName}, now has {updatedHandlers.Count} handlers");
@@ -103,7 +136,14 @@ namespace VSIXExtention
             System.Diagnostics.Debug.WriteLine("MediatR Cache: Cache cleared");
         }
 
-
+        public void InvalidateHandlersForRequestType(string requestTypeName)
+        {
+            if (_handlerCache.TryRemove(requestTypeName, out var removedHandlers))
+            {
+                _cacheIsDirty = true;
+                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Invalidated cache for {requestTypeName} (removed {removedHandlers.Count} handlers)");
+            }
+        }
 
         public List<string> GetRecentlyUsedRequestTypes()
         {
@@ -180,7 +220,8 @@ namespace VSIXExtention
                             var handlers = kvp.Value.Select(ConvertFromSerializable).Where(h => h != null).ToList();
                             if (handlers.Any())
                             {
-                                _handlerCache.TryAdd(kvp.Key, handlers);
+                                var cachedHandlers = handlers.Select(h => new CachedHandlerInfo(h)).ToList();
+                                _handlerCache.TryAdd(kvp.Key, cachedHandlers);
                             }
                         }
 
@@ -198,31 +239,21 @@ namespace VSIXExtention
                     }
                     else
                     {
-                        System.Diagnostics.Debug.WriteLine("MediatR Cache: Cache file is invalid or for different solution, creating fresh cache file");
+                        System.Diagnostics.Debug.WriteLine("MediatR Cache: Cache file is invalid or for different solution, recreating cache file");
+                        // Clear memory cache and recreate file for invalid cache
+                        _handlerCache.Clear();
+                        _recentlyUsedRequestTypes.Clear();
                     }
                 }
                 finally
                 {
                     _cacheFileSemaphore.Release();
                 }
-                
-                // Create empty cache file if needed (outside of semaphore)
-                if (!_handlerCache.Any())
-                {
-                    await CreateEmptyCacheFileAsync();
-                }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Error loading cache from file: {ex.Message}, creating fresh cache file");
-                try
-                {
-                    await CreateEmptyCacheFileAsync();
-                }
-                catch (Exception createEx)
-                {
-                    System.Diagnostics.Debug.WriteLine($"MediatR Cache: Error creating empty cache file: {createEx.Message}");
-                }
+                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Error loading cache from file: {ex.Message}, will create fresh cache file when needed");
+                // Don't create empty cache file immediately on error - let it be created when first needed
             }
         }
 
@@ -280,7 +311,7 @@ namespace VSIXExtention
                     // Only save handlers for recently used request types
                     if (recentRequestTypes.Contains(kvp.Key))
                     {
-                        var serializableHandlers = kvp.Value.Select(ConvertToSerializable).Where(h => h != null).ToList();
+                        var serializableHandlers = kvp.Value.Select(cachedHandler => ConvertToSerializable(cachedHandler.Handler)).Where(h => h != null).ToList();
                         if (serializableHandlers.Any())
                         {
                             cacheData.HandlerCache[kvp.Key] = serializableHandlers;
@@ -294,22 +325,30 @@ namespace VSIXExtention
                     cacheData.RecentlyUsedRequestTypes[kvp.Key] = kvp.Value;
                 }
 
-                var json = JsonConvert.SerializeObject(cacheData);
-                
-                await _cacheFileSemaphore.WaitAsync();
-                try
+                // Only save if we have meaningful data or if the file doesn't exist
+                if (cacheData.HandlerCache.Count > 0 || cacheData.RecentlyUsedRequestTypes.Count > 0 || !System.IO.File.Exists(_cacheFilePath))
                 {
-                    System.IO.File.WriteAllText(_cacheFilePath, json);
-                }
-                finally
-                {
-                    _cacheFileSemaphore.Release();
-                }
+                    var json = JsonConvert.SerializeObject(cacheData);
+                    
+                    await _cacheFileSemaphore.WaitAsync();
+                    try
+                    {
+                        System.IO.File.WriteAllText(_cacheFilePath, json);
+                    }
+                    finally
+                    {
+                        _cacheFileSemaphore.Release();
+                    }
 
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Saved cache with {cacheData.HandlerCache.Count} handler types to {_cacheFilePath}");
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: In-memory cache has {_handlerCache.Count} types: [{string.Join(", ", _handlerCache.Keys)}]");
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Recent types: [{string.Join(", ", recentRequestTypes)}]");
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Saved types: [{string.Join(", ", cacheData.HandlerCache.Keys)}]");
+                    System.Diagnostics.Debug.WriteLine($"MediatR Cache: Saved cache with {cacheData.HandlerCache.Count} handler types and {cacheData.RecentlyUsedRequestTypes.Count} recent types to {_cacheFilePath}");
+                    System.Diagnostics.Debug.WriteLine($"MediatR Cache: In-memory cache has {_handlerCache.Count} types: [{string.Join(", ", _handlerCache.Keys)}]");
+                    System.Diagnostics.Debug.WriteLine($"MediatR Cache: Recent types: [{string.Join(", ", recentRequestTypes)}]");
+                    System.Diagnostics.Debug.WriteLine($"MediatR Cache: Saved types: [{string.Join(", ", cacheData.HandlerCache.Keys)}]");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine("MediatR Cache: Skipped saving - no meaningful data and file exists");
+                }
             }
             catch (Exception ex)
             {
@@ -391,16 +430,92 @@ namespace VSIXExtention
         {
             try
             {
+                var hasChanges = false;
+                var now = DateTime.Now;
+                var validationCutoff = now.AddDays(-7);
+                
+                // First, validate old handlers that haven't been checked recently
+                foreach (var kvp in _handlerCache.ToList())
+                {
+                    var requestTypeName = kvp.Key;
+                    var cachedHandlers = kvp.Value.ToList();
+                    var handlersToRemove = new List<CachedHandlerInfo>();
+                    
+                    foreach (var cachedHandler in cachedHandlers)
+                    {
+                        // If handler hasn't been validated in 7 days, check if it still exists
+                        if (cachedHandler.LastValidated < validationCutoff)
+                        {
+                            if (DoesHandlerStillExist(cachedHandler.Handler))
+                            {
+                                // Handler still exists, update validation time
+                                cachedHandler.LastValidated = now;
+                                hasChanges = true;
+                                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Validated handler {cachedHandler.Handler.HandlerTypeName} for {requestTypeName}");
+                            }
+                            else
+                            {
+                                // Handler no longer exists, mark for removal
+                                handlersToRemove.Add(cachedHandler);
+                                hasChanges = true;
+                                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Handler {cachedHandler.Handler.HandlerTypeName} for {requestTypeName} no longer exists, removing from cache");
+                            }
+                        }
+                    }
+                    
+                    // Remove stale handlers
+                    if (handlersToRemove.Any())
+                    {
+                        var updatedHandlers = cachedHandlers.Except(handlersToRemove).ToList();
+                        if (updatedHandlers.Any())
+                        {
+                            _handlerCache.TryUpdate(requestTypeName, updatedHandlers, cachedHandlers);
+                        }
+                        else
+                        {
+                            // No handlers left for this request type, remove the entire entry
+                            _handlerCache.TryRemove(requestTypeName, out _);
+                        }
+                    }
+                }
+                
+                // Save cache if we made changes or if it was already dirty
+                if (hasChanges)
+                {
+                    _cacheIsDirty = true;
+                }
+                
                 if (_cacheIsDirty && _cacheLoaded)
                 {
                     _ = Task.Run(SaveCacheToFileAsync);
                     _cacheIsDirty = false;
-                    System.Diagnostics.Debug.WriteLine("MediatR Cache: Periodic cache save triggered");
+                    System.Diagnostics.Debug.WriteLine("MediatR Cache: Periodic cache save and validation completed");
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Error in periodic save: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Error in periodic save and validation: {ex.Message}");
+            }
+        }
+
+        private bool DoesHandlerStillExist(MediatRPatternMatcher.MediatRHandlerInfo handler)
+        {
+            try
+            {
+                // Quick check: does the file still exist?
+                var filePath = handler.Location?.SourceTree?.FilePath;
+                if (string.IsNullOrEmpty(filePath) || !System.IO.File.Exists(filePath))
+                {
+                    return false;
+                }
+                
+                // Additional validation could be added here if needed
+                // For now, file existence is sufficient for periodic validation
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 

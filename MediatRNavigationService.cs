@@ -29,7 +29,6 @@ namespace VSIXExtention
         private readonly ConcurrentDictionary<ProjectId, Compilation> _compilationCache = new ConcurrentDictionary<ProjectId, Compilation>();
         
         // Track solution version to detect changes
-        private int _lastSolutionVersion = -1;
         private bool _workspaceEventsSubscribed = false;
         private bool _disposed = false;
         
@@ -44,7 +43,7 @@ namespace VSIXExtention
         public MediatRNavigationService(IServiceProvider serviceProvider)
         {
             _serviceProvider = serviceProvider;
-            _cacheManager = new MediatRCacheManager();
+            _cacheManager = new MediatRCacheManager(this);
         }
 
         public async Task<bool> TryNavigateToHandlerAsync(INamedTypeSymbol requestTypeSymbol)
@@ -166,7 +165,7 @@ namespace VSIXExtention
             }
         }
 
-        private void OnWorkspaceChanged(object sender, WorkspaceChangeEventArgs e)
+        private async void OnWorkspaceChanged(object sender, WorkspaceChangeEventArgs e)
         {
             try
             {
@@ -174,15 +173,13 @@ namespace VSIXExtention
                 switch (e.Kind)
                 {
                     case WorkspaceChangeKind.SolutionAdded:
-                        // Only clear cache for actual solution structure changes
-                        System.Diagnostics.Debug.WriteLine($"MediatR Extension: Solution structure changed ({e.Kind}), clearing cache");
-                        _cacheManager.ClearCache();
+                        System.Diagnostics.Debug.WriteLine($"MediatR Extension: New solution loaded, reinitializing cache");
+                        await ReinitializeCacheForNewSolution(e.NewSolution);
                         break;
                         
                     case WorkspaceChangeKind.SolutionCleared:
                     case WorkspaceChangeKind.SolutionRemoved:
                     case WorkspaceChangeKind.SolutionReloaded:
-                        // Solution is closing - save cache but don't clear it (we want to preserve it)
                         System.Diagnostics.Debug.WriteLine("MediatR Extension: Solution closing, saving cache");
                         _ = Task.Run(async () =>
                         {
@@ -191,11 +188,8 @@ namespace VSIXExtention
                         });
                         break;
                         
-                    case WorkspaceChangeKind.ProjectAdded:
-                    case WorkspaceChangeKind.ProjectRemoved:
-                        System.Diagnostics.Debug.WriteLine($"MediatR Extension: Project structure changed ({e.Kind}), clearing cache");
-                        _cacheManager.ClearCache();
-                        break;
+                    // Removed ProjectAdded/ProjectRemoved events - they're unreliable during solution closing
+                    // and cause unnecessary cache clearing. Document save events handle cache updates properly.
                         
                     case WorkspaceChangeKind.DocumentAdded:
                     case WorkspaceChangeKind.DocumentRemoved:
@@ -228,6 +222,49 @@ namespace VSIXExtention
             }
         }
 
+        private async Task ReinitializeCacheForNewSolution(Solution newSolution)
+        {
+            try
+            {
+                if (newSolution?.FilePath == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("MediatR Extension: No solution file path, skipping cache reinitialization");
+                    return;
+                }
+
+                // Dispose the old cache manager
+                _cacheManager?.Dispose();
+                
+                // Create a new cache manager for the new solution
+                _cacheManager = new MediatRCacheManager(this);
+                
+                // Initialize it with the new solution
+                await _cacheManager.InitializeAsync(newSolution);
+                
+                // Clear compilation cache since we're in a new solution
+                _compilationCache.Clear();
+                
+                System.Diagnostics.Debug.WriteLine($"MediatR Extension: Cache reinitialized for new solution: {newSolution.FilePath}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatR Extension: Error reinitializing cache for new solution: {ex.Message}");
+                
+                // Fallback: create a basic cache manager if reinitialization fails
+                try
+                {
+                    _cacheManager?.Dispose();
+                    _cacheManager = new MediatRCacheManager(this);
+                }
+                catch (Exception fallbackEx)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatR Extension: Error in fallback cache creation: {fallbackEx.Message}");
+                }
+            }
+        }
+
+
+
         internal async Task OnDocumentSaved(string filePath)
         {
             try
@@ -250,13 +287,9 @@ namespace VSIXExtention
             // Only scan C# files
             if (!filePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)) return false;
             
-            // Quick heuristic based on file name - likely to contain handlers/requests
-            var fileName = System.IO.Path.GetFileName(filePath).ToLowerInvariant();
-            return fileName.Contains("handler") || 
-                   fileName.Contains("request") || 
-                   fileName.Contains("command") || 
-                   fileName.Contains("query") || 
-                   fileName.Contains("notification");
+            // Accept all C# files - the file name heuristic was too restrictive
+            // Users might name their handlers/requests differently (e.g., UserService.cs, Controllers/UserController.cs, etc.)
+            return true;
         }
 
         private async Task UpdateCacheForSavedDocument(string filePath)
@@ -272,11 +305,31 @@ namespace VSIXExtention
                 var document = workspace.CurrentSolution.GetDocument(documentIds.First());
                 if (document == null) return;
 
+                // Clear compilation cache for this project to get fresh data
+                if (_compilationCache.ContainsKey(document.Project.Id))
+                {
+                    _compilationCache.TryRemove(document.Project.Id, out _);
+                    System.Diagnostics.Debug.WriteLine($"MediatR Extension: Cleared compilation cache for project {document.Project.Name}");
+                }
+
                 var newHandlers = await ScanDocumentForHandlers(document);
                 if (newHandlers.Any())
                 {
                     _cacheManager.UpdateCacheWithHandlers(newHandlers);
                     System.Diagnostics.Debug.WriteLine($"MediatR Extension: Updated cache with {newHandlers.Count} handlers from {filePath}");
+                }
+
+                // Always clear cache for recently used request types to ensure fresh scans
+                // This handles the case where handlers were added, modified, or deleted
+                var recentRequestTypes = _cacheManager.GetRecentlyUsedRequestTypes();
+                foreach (var requestType in recentRequestTypes)
+                {
+                    _cacheManager.InvalidateHandlersForRequestType(requestType);
+                }
+                
+                if (recentRequestTypes.Any())
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatR Extension: Invalidated cache for {recentRequestTypes.Count} recent request types: [{string.Join(", ", recentRequestTypes)}]");
                 }
             }
             catch (Exception ex)
@@ -497,7 +550,13 @@ namespace VSIXExtention
 
             if (handlers.Count == 1)
             {
-                return await NavigateToLocationAsync(handlers[0].Location);
+                var success = await NavigateToLocationAsync(handlers[0].Location);
+                if (!success)
+                {
+                    // Try to recover by performing a fresh search
+                    return await TryRecoverFromFailedNavigation(handlers[0], isNotification);
+                }
+                return success;
             }
 
             var result = await NavigateToMultipleHandlersAsync(handlers, isNotification);
@@ -544,7 +603,13 @@ namespace VSIXExtention
                 var selectedHandler = handlerDisplayInfo.FirstOrDefault(hdi => hdi.DisplayText == selectedHandlerName)?.Handler;
                 if (selectedHandler != null)
                 {
-                    return await NavigateToLocationAsync(selectedHandler.Location);
+                    var success = await NavigateToLocationAsync(selectedHandler.Location);
+                    if (!success)
+                    {
+                        // Try to recover by performing a fresh search
+                        return await TryRecoverFromFailedNavigation(selectedHandler, isNotification);
+                    }
+                    return success;
                 }
 
                 return false;
@@ -608,11 +673,108 @@ namespace VSIXExtention
                 return false;
             }
 
+            var filePath = location.SourceTree.FilePath;
             var lineSpan = location.GetLineSpan();
-            System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Navigating to {location.SourceTree.FilePath} at line {lineSpan.StartLinePosition.Line + 1}");
-            var result = await OpenDocumentAndNavigate(location.SourceTree.FilePath, lineSpan.StartLinePosition);
+            
+            System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Navigating to {filePath} at line {lineSpan.StartLinePosition.Line + 1}");
+            
+            // Check if file exists first
+            if (!System.IO.File.Exists(filePath))
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatR Navigation: File not found: {filePath}");
+                return false;
+            }
+            
+            var result = await OpenDocumentAndNavigate(filePath, lineSpan.StartLinePosition);
             System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Navigation result: {result}");
             return result;
+        }
+
+        private async Task<bool> TryRecoverFromFailedNavigation(MediatRPatternMatcher.MediatRHandlerInfo failedHandler, bool isNotification)
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Attempting recovery for {failedHandler.HandlerTypeName} (RequestType: {failedHandler.RequestTypeName})");
+
+                var workspace = GetOrCreateWorkspace();
+                if (workspace?.CurrentSolution == null)
+                {
+                    await ShowRecoveryFailedMessageAsync(failedHandler.HandlerTypeName, "No workspace available");
+                    return false;
+                }
+
+                // Create a mock request info for the failed handler
+                var requestInfo = new MediatRPatternMatcher.MediatRRequestInfo
+                {
+                    RequestTypeName = failedHandler.RequestTypeName,
+                    IsNotification = isNotification
+                };
+
+                // Perform fresh search without clearing cache first - more efficient
+                var freshHandlers = await FindHandlersOptimized(workspace.CurrentSolution, requestInfo);
+
+                if (freshHandlers.Any())
+                {
+                    // Update cache with fresh results (this will replace the stale entry)
+                    _cacheManager.CacheHandlers(failedHandler.RequestTypeName, freshHandlers);
+                    
+                    System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Recovery found {freshHandlers.Count} handlers for {failedHandler.RequestTypeName}");
+
+                    // Try to find the same handler type or navigate to first available
+                    var matchingHandler = freshHandlers.FirstOrDefault(h => h.HandlerTypeName == failedHandler.HandlerTypeName) 
+                                         ?? freshHandlers.First();
+
+                    return await NavigateToLocationAsync(matchingHandler.Location);
+                }
+                else
+                {
+                    // Only clear cache if no handlers found (handler was deleted)
+                    _cacheManager.InvalidateHandlersForRequestType(failedHandler.RequestTypeName);
+                    System.Diagnostics.Debug.WriteLine($"MediatR Navigation: No handlers found for {failedHandler.RequestTypeName}, cleared cache entry");
+                    
+                    await ShowRecoveryFailedMessageAsync(failedHandler.HandlerTypeName, $"Handler for '{failedHandler.RequestTypeName}' no longer exists in the solution");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Error during recovery: {ex.Message}");
+                await ShowRecoveryFailedMessageAsync(failedHandler.HandlerTypeName, $"Recovery failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        private async Task ShowRecoveryFailedMessageAsync(string handlerTypeName, string reason)
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            
+            try
+            {
+                // Get the service provider to show the message
+                var serviceProvider = _serviceProvider ?? ServiceProvider.GlobalProvider;
+                if (serviceProvider != null)
+                {
+                    var uiShell = serviceProvider.GetService(typeof(SVsUIShell)) as IVsUIShell;
+                    if (uiShell != null)
+                    {
+                        var message = $"Could not navigate to handler '{handlerTypeName}'.\n\n" +
+                                     $"Reason: {reason}\n\n" +
+                                     "The handler may have been moved, renamed, or deleted. " +
+                                     "Try rebuilding your solution or check if the handler still exists.";
+
+                        var title = "MediatR Extension - Navigation Failed";
+                        var result = 0;
+                        uiShell.ShowMessageBox(0, Guid.Empty, title, message, 
+                                             string.Empty, 0, OLEMSGBUTTON.OLEMSGBUTTON_OK, 
+                                             OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST, 
+                                             OLEMSGICON.OLEMSGICON_WARNING, 0, out result);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error showing recovery failed message: {ex.Message}");
+            }
         }
 
         private async Task<bool> OpenDocumentAndNavigate(string filePath, Microsoft.CodeAnalysis.Text.LinePosition linePosition)
@@ -664,13 +826,6 @@ namespace VSIXExtention
             }
         }
 
-        public void ClearCache()
-        {
-            _compilationCache.Clear();
-            _cacheManager.ClearCache();
-            System.Diagnostics.Debug.WriteLine("MediatR Extension: Caches cleared");
-        }
-
         public async Task SaveCacheAsync()
         {
             await _cacheManager.SaveCacheAsync();
@@ -681,6 +836,12 @@ namespace VSIXExtention
             if (!_cacheManager.IsCacheLoaded)
             {
                 await _cacheManager.InitializeAsync(solution);
+            }
+            else if (solution?.FilePath != null && _cacheManager.CurrentSolutionPath != solution.FilePath)
+            {
+                // Solution has changed but cache manager wasn't reinitialized - fix it
+                System.Diagnostics.Debug.WriteLine($"MediatR Extension: Detected solution mismatch. Cache: {_cacheManager.CurrentSolutionPath}, Current: {solution.FilePath}");
+                await ReinitializeCacheForNewSolution(solution);
             }
         }
 
