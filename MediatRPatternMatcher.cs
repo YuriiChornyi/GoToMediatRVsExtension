@@ -43,10 +43,24 @@ namespace VSIXExtention
                 (i.Name == RequestInterface || i.Name == NotificationInterface));
         }
 
+        /// <summary>
+        /// Gets the first MediatR request info (for backward compatibility)
+        /// </summary>
         public static MediatRRequestInfo GetRequestInfo(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
         {
+            var allRequestInfo = GetAllRequestInfo(typeSymbol, semanticModel);
+            return allRequestInfo.FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Gets all MediatR request info - handles classes that implement both IRequest and INotification
+        /// </summary>
+        public static List<MediatRRequestInfo> GetAllRequestInfo(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
+        {
+            var requestInfoList = new List<MediatRRequestInfo>();
+            
             if (!IsMediatRRequest(typeSymbol, semanticModel))
-                return null;
+                return requestInfoList;
 
             foreach (var @interface in typeSymbol.AllInterfaces.Where(i => i.ContainingNamespace?.ToDisplayString() == MediatRNamespace))
             {
@@ -55,29 +69,46 @@ namespace VSIXExtention
                     var hasResponse = @interface.TypeArguments.Length > 0;
                     var responseTypeName = hasResponse ? @interface.TypeArguments[0].Name : null;
 
-                    return new MediatRRequestInfo
+                    requestInfoList.Add(new MediatRRequestInfo
                     {
                         RequestTypeName = typeSymbol.Name,
                         ResponseTypeName = responseTypeName,
                         RequestSymbol = typeSymbol,
                         HasResponse = hasResponse,
                         IsNotification = false
-                    };
+                    });
                 }
                 else if (@interface.Name == NotificationInterface)
                 {
-                    return new MediatRRequestInfo
+                    requestInfoList.Add(new MediatRRequestInfo
                     {
                         RequestTypeName = typeSymbol.Name,
                         ResponseTypeName = null,
                         RequestSymbol = typeSymbol,
                         HasResponse = false,
                         IsNotification = true
-                    };
+                    });
                 }
             }
 
-            return null;
+            return requestInfoList;
+        }
+
+        /// <summary>
+        /// Checks if a type implements both IRequest and INotification
+        /// </summary>
+        public static bool ImplementsBothRequestAndNotification(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
+        {
+            if (typeSymbol == null) return false;
+
+            var mediatrInterfaces = typeSymbol.AllInterfaces
+                .Where(i => i.ContainingNamespace?.ToDisplayString() == MediatRNamespace)
+                .ToList();
+
+            bool hasRequest = mediatrInterfaces.Any(i => i.Name == RequestInterface);
+            bool hasNotification = mediatrInterfaces.Any(i => i.Name == NotificationInterface);
+
+            return hasRequest && hasNotification;
         }
 
         public static bool IsMediatRHandler(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
@@ -130,6 +161,33 @@ namespace VSIXExtention
             return null;
         }
 
+        /// <summary>
+        /// Finds all handlers (both request and notification) for a given type symbol
+        /// </summary>
+        public static async Task<List<MediatRHandlerInfo>> FindAllHandlersForTypeSymbol(Solution solution, INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
+        {
+            var allHandlers = new List<MediatRHandlerInfo>();
+            var allRequestInfo = GetAllRequestInfo(typeSymbol, semanticModel);
+
+            foreach (var requestInfo in allRequestInfo)
+            {
+                List<MediatRHandlerInfo> handlers;
+                
+                if (requestInfo.IsNotification)
+                {
+                    handlers = await FindNotificationHandlersInSolution(solution, requestInfo.RequestTypeName);
+                }
+                else
+                {
+                    handlers = await FindHandlersInSolution(solution, requestInfo.RequestTypeName);
+                }
+                
+                allHandlers.AddRange(handlers);
+            }
+
+            return allHandlers;
+        }
+
         public static async Task<List<MediatRHandlerInfo>> FindHandlersInSolution(Solution solution, string requestTypeName)
         {
             var handlers = new List<MediatRHandlerInfo>();
@@ -179,7 +237,7 @@ namespace VSIXExtention
                     if (typeSymbol == null) continue;
 
                     var handlerInfo = GetHandlerInfo(typeSymbol, semanticModel);
-                    if (handlerInfo?.RequestTypeName == requestTypeName)
+                    if (handlerInfo?.RequestTypeName == requestTypeName && !handlerInfo.IsNotificationHandler)
                     {
                         handlers.Add(handlerInfo);
                     }

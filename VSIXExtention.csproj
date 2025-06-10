@@ -56,8 +56,13 @@
     <Compile Include="HandlerSelectionDialog.cs">
       <DependentUpon>HandlerSelectionDialog.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Interfaces\IMediatRServices.cs" />
     <Compile Include="MediatRCacheManager.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="Services\MediatRCommandHandler.cs" />
+    <Compile Include="Services\MediatRContextService.cs" />
+    <Compile Include="Services\ServiceContainer.cs" />
+    <Compile Include="Services\WorkspaceService.cs" />
     <Compile Include="VSIXExtentionPackage.cs" />
     <Compile Include="MediatRPatternMatcher.cs" />
     <Compile Include="MediatRNavigationService.cs" />

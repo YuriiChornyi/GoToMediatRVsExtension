@@ -16,7 +16,6 @@ namespace VSIXExtention
     public class MediatRGoToImplementationProvider : IDisposable
     {
         private readonly IServiceProvider _serviceProvider;
-        private readonly Lazy<MediatRNavigationService> _navigationService;
         private VisualStudioWorkspace _cachedWorkspace;
         private readonly object _workspaceLock = new object();
         private bool _disposed = false;
@@ -25,8 +24,6 @@ namespace VSIXExtention
         public MediatRGoToImplementationProvider()
         {
             _serviceProvider = ServiceProvider.GlobalProvider;
-            // Lazy initialization to improve startup performance
-            _navigationService = new Lazy<MediatRNavigationService>(() => new MediatRNavigationService(_serviceProvider));
         }
 
         public async Task<bool> TryGoToImplementationAsync(ITextView textView, int position)
@@ -51,7 +48,32 @@ namespace VSIXExtention
                 if (typeSymbol == null)
                     return false;
 
-                return await _navigationService.Value.TryNavigateToHandlerAsync(typeSymbol);
+                // Use the new method that finds ALL handlers (both request and notification)
+                var semanticModel = await document.GetSemanticModelAsync();
+                var allHandlers = await MediatRPatternMatcher.FindAllHandlersForTypeSymbol(workspace.CurrentSolution, typeSymbol, semanticModel);
+
+                if (!allHandlers.Any())
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatR Provider: No handlers found for {typeSymbol.Name}");
+                    return false;
+                }
+
+                // Log what we found for debugging
+                var requestHandlers = allHandlers.Where(h => !h.IsNotificationHandler).ToList();
+                var notificationHandlers = allHandlers.Where(h => h.IsNotificationHandler).ToList();
+                
+                System.Diagnostics.Debug.WriteLine($"MediatR Provider: Found {allHandlers.Count} total handlers for {typeSymbol.Name}:");
+                if (requestHandlers.Any())
+                {
+                    System.Diagnostics.Debug.WriteLine($"  - {requestHandlers.Count} request handler(s): {string.Join(", ", requestHandlers.Select(h => h.HandlerTypeName))}");
+                }
+                if (notificationHandlers.Any())
+                {
+                    System.Diagnostics.Debug.WriteLine($"  - {notificationHandlers.Count} notification handler(s): {string.Join(", ", notificationHandlers.Select(h => h.HandlerTypeName))}");
+                }
+
+                // Navigate to handlers using the existing navigation logic
+                return await NavigateToHandlers(allHandlers, typeSymbol, semanticModel);
             }
             catch (Exception ex)
             {
@@ -60,25 +82,202 @@ namespace VSIXExtention
             }
         }
 
+        private async Task<bool> NavigateToHandlers(System.Collections.Generic.List<MediatRPatternMatcher.MediatRHandlerInfo> allHandlers, INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
+        {
+            try
+            {
+                if (allHandlers.Count == 1)
+                {
+                    // Single handler - navigate directly
+                    return await NavigateToLocationAsync(allHandlers[0].Location);
+                }
+
+                // Multiple handlers - show selection dialog
+                // Check if this class implements both IRequest and INotification
+                bool implementsBoth = MediatRPatternMatcher.ImplementsBothRequestAndNotification(typeSymbol, semanticModel);
+                
+                if (implementsBoth)
+                {
+                    // Group handlers by type for better user experience
+                    var requestHandlers = allHandlers.Where(h => !h.IsNotificationHandler).ToList();
+                    var notificationHandlers = allHandlers.Where(h => h.IsNotificationHandler).ToList();
+                    
+                    string message = $"Multiple handlers found for '{typeSymbol.Name}':\n";
+                    if (requestHandlers.Any())
+                    {
+                        message += $"• {requestHandlers.Count} Request Handler(s)\n";
+                    }
+                    if (notificationHandlers.Any())
+                    {
+                        message += $"• {notificationHandlers.Count} Notification Handler(s)\n";
+                    }
+                    message += "\nPlease select one:";
+                    
+                    var handlerDisplayInfo = allHandlers.Select(h => new HandlerDisplayInfo
+                    {
+                        Handler = h,
+                        DisplayText = FormatHandlerDisplayText(h)
+                    }).ToArray();
+
+                    var selectedHandlerName = ShowHandlerSelectionDialog(handlerDisplayInfo, message);
+                    
+                    if (selectedHandlerName == null)
+                    {
+                        return true; // User cancelled
+                    }
+
+                    var selectedHandler = handlerDisplayInfo.FirstOrDefault(hdi => hdi.DisplayText == selectedHandlerName)?.Handler;
+                    if (selectedHandler != null)
+                    {
+                        return await NavigateToLocationAsync(selectedHandler.Location);
+                    }
+                }
+                else
+                {
+                    // Standard multiple handlers of the same type
+                    var handlerDisplayInfo = allHandlers.Select(h => new HandlerDisplayInfo
+                    {
+                        Handler = h,
+                        DisplayText = FormatHandlerDisplayText(h)
+                    }).ToArray();
+
+                    var isNotification = allHandlers.First().IsNotificationHandler;
+                    string handlerType = isNotification ? "notification handler" : "handler";
+                    string message = $"Multiple {handlerType}s found. Please select one:";
+
+                    var selectedHandlerName = ShowHandlerSelectionDialog(handlerDisplayInfo, message);
+                    
+                    if (selectedHandlerName == null)
+                    {
+                        return true; // User cancelled
+                    }
+
+                    var selectedHandler = handlerDisplayInfo.FirstOrDefault(hdi => hdi.DisplayText == selectedHandlerName)?.Handler;
+                    if (selectedHandler != null)
+                    {
+                        return await NavigateToLocationAsync(selectedHandler.Location);
+                    }
+                }
+
+                return false;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatR Provider: Error navigating to handlers: {ex.Message}");
+                return false;
+            }
+        }
+
+        private string FormatHandlerDisplayText(MediatRPatternMatcher.MediatRHandlerInfo handler)
+        {
+            try
+            {
+                var handlerType = handler.IsNotificationHandler ? "[Notification]" : "[Request]";
+                var filePath = handler.Location?.SourceTree?.FilePath;
+                
+                if (string.IsNullOrEmpty(filePath))
+                {
+                    return $"{handlerType} {handler.HandlerTypeName}";
+                }
+
+                // Extract last 2-3 folders for context
+                var pathParts = filePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+                if (pathParts.Length <= 2)
+                {
+                    return $"{handlerType} {handler.HandlerTypeName} ({string.Join("/", pathParts)})";
+                }
+
+                var relevantParts = pathParts.Skip(Math.Max(0, pathParts.Length - 3)).ToArray();
+                return $"{handlerType} {handler.HandlerTypeName} ({string.Join("/", relevantParts)})";
+            }
+            catch
+            {
+                var handlerType = handler.IsNotificationHandler ? "[Notification]" : "[Request]";
+                return $"{handlerType} {handler.HandlerTypeName}";
+            }
+        }
+
+        private string ShowHandlerSelectionDialog(HandlerDisplayInfo[] handlerDisplayInfo, string message)
+        {
+            var handlerNames = handlerDisplayInfo.Select(hdi => hdi.DisplayText).ToArray();
+            var dialog = new HandlerSelectionDialog(message, handlerNames);
+            
+            var result = dialog.ShowModal();
+            if (result != true)
+            {
+                return null;
+            }
+            
+            return dialog.SelectedHandler;
+        }
+
+        private async Task<bool> NavigateToLocationAsync(Location location)
+        {
+            if (location?.SourceTree?.FilePath == null)
+            {
+                System.Diagnostics.Debug.WriteLine("MediatR Provider: Location or FilePath is null");
+                return false;
+            }
+
+            var filePath = location.SourceTree.FilePath;
+            var lineSpan = location.GetLineSpan();
+            
+            System.Diagnostics.Debug.WriteLine($"MediatR Provider: Navigating to {filePath} at line {lineSpan.StartLinePosition.Line + 1}");
+            
+            if (!System.IO.File.Exists(filePath))
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatR Provider: File not found: {filePath}");
+                return false;
+            }
+            
+            return await OpenDocumentAndNavigate(filePath, lineSpan.StartLinePosition);
+        }
+
+        private async Task<bool> OpenDocumentAndNavigate(string filePath, Microsoft.CodeAnalysis.Text.LinePosition linePosition)
+        {
+            try
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                
+                System.Diagnostics.Debug.WriteLine($"MediatR Provider: Opening file: {filePath} at line {linePosition.Line + 1}");
+
+                var dte = _serviceProvider.GetService(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
+                if (dte?.ItemOperations == null)
+                {
+                    return false;
+                }
+
+                var window = dte.ItemOperations.OpenFile(filePath);
+                if (window?.Document?.Object("TextDocument") is EnvDTE.TextDocument textDocument)
+                {
+                    var selection = textDocument.Selection;
+                    selection.MoveToLineAndOffset(linePosition.Line + 1, linePosition.Character + 1, false);
+                    return true;
+                }
+
+                return false;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatR Provider: Error opening document {filePath}: {ex.Message}");
+                return false;
+            }
+        }
+
         private bool IsValidContext(ITextView textView)
         {
-            // Early bailout: check buffer properties first (fastest check)
             var textBuffer = textView?.TextBuffer;
             if (textBuffer == null)
                 return false;
 
-            // Quick content type check
             var contentType = textBuffer.ContentType;
             if (contentType?.TypeName != "CSharp")
                 return false;
 
             var filePath = GetFilePathFromTextBuffer(textBuffer);
-
-            // Only process C# files
             if (string.IsNullOrEmpty(filePath) || !filePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
                 return false;
 
-            // Skip multiline selections for performance
             if (!textView.Selection.IsEmpty && IsMultilineSelection(textView))
                 return false;
 
@@ -95,7 +294,6 @@ namespace VSIXExtention
 
         private VisualStudioWorkspace GetOrCreateWorkspace()
         {
-            // Thread-safe lazy workspace initialization with caching
             if (_cachedWorkspace != null)
                 return _cachedWorkspace;
 
@@ -111,19 +309,14 @@ namespace VSIXExtention
 
         private VisualStudioWorkspace GetVisualStudioWorkspace()
         {
-            // Try methods in order of likelihood to succeed (most common first)
-
-            // Method 1: Through global service provider (most reliable)
             var workspace = Package.GetGlobalService(typeof(VisualStudioWorkspace)) as VisualStudioWorkspace;
             if (workspace != null)
                 return workspace;
 
-            // Method 2: Through service provider
             workspace = _serviceProvider.GetService(typeof(VisualStudioWorkspace)) as VisualStudioWorkspace;
             if (workspace != null)
                 return workspace;
 
-            // Method 3: Through component model (fallback)
             try
             {
                 var componentModel = _serviceProvider.GetService(typeof(SComponentModel)) as IComponentModel;
@@ -139,42 +332,34 @@ namespace VSIXExtention
         {
             var filePath = GetFilePathFromTextBuffer(textView.TextBuffer);
 
-            // Use faster method to get document if available
             var documentIds = workspace.CurrentSolution.GetDocumentIdsWithFilePath(filePath);
             if (!documentIds.Any())
                 return null;
 
-            // Take first matching document (usually there's only one)
             var documentId = documentIds.First();
             return workspace.CurrentSolution.GetDocument(documentId);
         }
 
         private async Task<INamedTypeSymbol> GetMediatRTypeSymbolAsync(ITextView textView, int position, Document document)
         {
-            // Get syntax tree once and reuse
             var syntaxTree = await document.GetSyntaxTreeAsync();
             if (syntaxTree == null)
                 return null;
 
             var textSpan = GetTextSpan(textView, position);
             var root = await syntaxTree.GetRootAsync();
-
-            // Find the most specific node first
             var node = root.FindNode(textSpan, getInnermostNodeForTie: true);
 
-            // Quick syntax check - must be in/on a class or identifier
             var classDeclaration = node.FirstAncestorOrSelf<ClassDeclarationSyntax>();
             var identifierName = node as IdentifierNameSyntax ?? node.FirstAncestorOrSelf<IdentifierNameSyntax>();
 
             if (classDeclaration == null && identifierName == null)
                 return null;
 
-            // Only get semantic model if we passed syntax checks (expensive operation)
             var semanticModel = await document.GetSemanticModelAsync();
             if (semanticModel == null)
                 return null;
 
-            // Check class declaration first (more common case)
             if (classDeclaration != null)
             {
                 var typeSymbol = semanticModel.GetDeclaredSymbol(classDeclaration) as INamedTypeSymbol;
@@ -182,7 +367,6 @@ namespace VSIXExtention
                     return typeSymbol;
             }
 
-            // Check identifier reference (less common)
             if (identifierName != null)
             {
                 var symbolInfo = semanticModel.GetSymbolInfo(identifierName);
@@ -206,14 +390,13 @@ namespace VSIXExtention
 
         private bool IsValidMediatRType(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
         {
-            return typeSymbol != null && MediatRPatternMatcher.GetRequestInfo(typeSymbol, semanticModel) != null;
+            return typeSymbol != null && MediatRPatternMatcher.IsMediatRRequest(typeSymbol, semanticModel);
         }
 
         private string GetFilePathFromTextBuffer(ITextBuffer textBuffer)
         {
             try
             {
-                // Method 1: Through TextDocument (fastest and most reliable)
                 if (textBuffer.Properties.TryGetProperty<ITextDocument>(typeof(ITextDocument), out var textDocument))
                 {
                     var filePath = textDocument?.FilePath;
@@ -221,7 +404,6 @@ namespace VSIXExtention
                         return filePath;
                 }
 
-                // Method 2: Through VsTextBuffer (fallback)
                 if (textBuffer.Properties.TryGetProperty<Microsoft.VisualStudio.TextManager.Interop.IVsTextBuffer>(
                     typeof(Microsoft.VisualStudio.TextManager.Interop.IVsTextBuffer), out var vsTextBuffer))
                 {
@@ -246,18 +428,7 @@ namespace VSIXExtention
         {
             if (!_disposed)
             {
-                try
-                {
-                    // Only dispose if the lazy value was created
-                    if (_navigationService.IsValueCreated)
-                    {
-                        _navigationService.Value.Dispose();
-                    }
-                }
-                finally
-                {
-                    _disposed = true;
-                }
+                _disposed = true;
             }
         }
     }

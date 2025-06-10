@@ -89,11 +89,6 @@ namespace VSIXExtention
                 menuItem.BeforeQueryStatus += MenuItem_BeforeQueryStatus;
                 commandService.AddCommand(menuItem);
 
-                // Register the test command (always visible in Tools menu)
-                var testMenuCommandID = new CommandID(CommandSet, GoToMediatRImplementationTestCommandId);
-                var testMenuItem = new OleMenuCommand(ExecuteTestCommand, testMenuCommandID);
-                commandService.AddCommand(testMenuItem);
-
                 // Register the context menu command
                 var contextMenuCommandID = new CommandID(CommandSet, GoToMediatRImplementationContextCommandId);
                 var contextMenuItem = new OleMenuCommand(ExecuteGoToImplementation, contextMenuCommandID);
@@ -360,12 +355,6 @@ namespace VSIXExtention
                 System.Diagnostics.Debug.WriteLine($"MediatR Extension: Error in ExecuteGoToImplementation: {ex.Message}");
                 await ShowMessageAsync($"An error occurred: {ex.Message}", "MediatR Extension Error");
             }
-        }
-
-        private async void ExecuteTestCommand(object sender, EventArgs e)
-        {
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            await ShowMessageAsync("MediatR Extension Test Command executed successfully!\n\nThis confirms the extension is loaded and commands are working.", "MediatR Extension Test");
         }
 
         private async Task ShowMessageAsync(string message, string title)
