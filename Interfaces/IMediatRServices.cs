@@ -65,6 +65,8 @@ namespace VSIXExtention.Interfaces
     {
         string ShowHandlerSelectionDialog(HandlerDisplayInfo[] handlers, bool isNotification);
         Task ShowErrorMessageAsync(string message, string title);
+        Task ShowInfoMessageAsync(string message, string title);
+        Task ShowWarningMessageAsync(string message, string title);
     }
 
     /// <summary>

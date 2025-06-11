@@ -11,7 +11,7 @@ using VSIXExtention.Interfaces;
 
 namespace VSIXExtention.Services
 {
-    public class WorkspaceService : IWorkspaceService, IDisposable
+    public class Workspace : IWorkspaceService, IDisposable
     {
         private readonly IServiceProvider _serviceProvider;
         private VisualStudioWorkspace _cachedWorkspace;
@@ -21,7 +21,7 @@ namespace VSIXExtention.Services
 
         public event EventHandler<WorkspaceChangeEventArgs> WorkspaceChanged;
 
-        public WorkspaceService(IServiceProvider serviceProvider)
+        public Workspace(IServiceProvider serviceProvider)
         {
             _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
         }
@@ -130,6 +130,8 @@ namespace VSIXExtention.Services
         {
             try
             {
+                ThreadHelper.ThrowIfNotOnUIThread();
+
                 // Method 1: Through TextDocument (fastest and most reliable)
                 if (textBuffer.Properties.TryGetProperty<ITextDocument>(typeof(ITextDocument), out var textDocument))
                 {
@@ -141,8 +143,6 @@ namespace VSIXExtention.Services
                 // Method 2: Through VsTextBuffer (fallback)
                 if (textBuffer.Properties.TryGetProperty<IVsTextBuffer>(typeof(IVsTextBuffer), out var vsTextBuffer))
                 {
-                    ThreadHelper.ThrowIfNotOnUIThread();
-
                     if (vsTextBuffer is Microsoft.VisualStudio.Shell.Interop.IPersistFileFormat persistFileFormat)
                     {
                         persistFileFormat.GetCurFile(out var filePath, out _);
@@ -171,7 +171,7 @@ namespace VSIXExtention.Services
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"Error during WorkspaceService disposal: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"Error during Workspace disposal: {ex.Message}");
                 }
                 finally
                 {

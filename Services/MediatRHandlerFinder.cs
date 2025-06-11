@@ -7,12 +7,12 @@ using VSIXExtention.Interfaces;
 
 namespace VSIXExtention.Services
 {
-    public class MediatRHandlerFinderService : IMediatRHandlerFinder
+    public class MediatRHandlerFinder : IMediatRHandlerFinder
     {
         private readonly IWorkspaceService _workspaceService;
         private readonly IMediatRCacheService _cacheService;
 
-        public MediatRHandlerFinderService(IWorkspaceService workspaceService, IMediatRCacheService cacheService)
+        public MediatRHandlerFinder(IWorkspaceService workspaceService, IMediatRCacheService cacheService)
         {
             _workspaceService = workspaceService ?? throw new ArgumentNullException(nameof(workspaceService));
             _cacheService = cacheService ?? throw new ArgumentNullException(nameof(cacheService));
@@ -68,6 +68,7 @@ namespace VSIXExtention.Services
             try
             {
                 var workspace = _workspaceService.GetWorkspace();
+                
                 if (workspace?.CurrentSolution == null)
                     return new List<MediatRPatternMatcher.MediatRHandlerInfo>();
 

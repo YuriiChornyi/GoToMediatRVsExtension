@@ -13,12 +13,6 @@ using Microsoft.VisualStudio.Threading;
 
 namespace VSIXExtention
 {
-    public class HandlerDisplayInfo
-    {
-        public MediatRPatternMatcher.MediatRHandlerInfo Handler { get; set; }
-        public string DisplayText { get; set; }
-    }
-
     public class MediatRNavigationService : IDisposable
     {
         private readonly IServiceProvider _serviceProvider;
@@ -338,7 +332,7 @@ namespace VSIXExtention
             }
         }
 
-        private async Task<List<MediatRPatternMatcher.MediatRHandlerInfo>> ScanDocumentForHandlers(Document document)
+        public async Task<List<MediatRPatternMatcher.MediatRHandlerInfo>> ScanDocumentForHandlers(Document document)
         {
             var handlers = new List<MediatRPatternMatcher.MediatRHandlerInfo>();
             

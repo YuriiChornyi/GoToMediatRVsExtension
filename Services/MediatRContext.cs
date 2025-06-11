@@ -8,11 +8,11 @@ using VSIXExtention.Interfaces;
 
 namespace VSIXExtention.Services
 {
-    public class MediatRContextService : IMediatRContextService
+    public class MediatRContext : IMediatRContextService
     {
         private readonly IWorkspaceService _workspaceService;
 
-        public MediatRContextService(IWorkspaceService workspaceService)
+        public MediatRContext(IWorkspaceService workspaceService)
         {
             _workspaceService = workspaceService ?? throw new ArgumentNullException(nameof(workspaceService));
         }

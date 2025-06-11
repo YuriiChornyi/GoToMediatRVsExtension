@@ -20,11 +20,15 @@ This Visual Studio 2022 extension provides "Go To Implementation" functionality 
 
 ## Usage
 
-### Method 1: Context Menu
+### Method 1: Keyboard Shortcut
+1. Position your cursor on a MediatR request/command/query/notification class name
+2. Press `Ctrl+Alt+F12` to navigate to the handler
+
+### Method 2: Context Menu
 1. Position your cursor on a MediatR request/command/query/notification class name
 2. Go to **Edit** menu → **Go to MediatR Implementation**
 
-### Method 2: Right-click Context Menu
+### Method 3: Right-click Context Menu
 1. Right-click on a MediatR request/command/query/notification class name
 2. Select **Go to MediatR Implementation** (when available)
 

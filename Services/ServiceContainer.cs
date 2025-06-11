@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Reflection;
 using VSIXExtention.Interfaces;
 
 namespace VSIXExtention.Services
@@ -25,13 +26,28 @@ namespace VSIXExtention.Services
                 // Default factory that tries to create instance using constructor
                 factory = container =>
                 {
-                    var constructor = typeof(TImplementation).GetConstructors()[0];
+                    var constructors = typeof(TImplementation).GetConstructors();
+                    if (constructors.Length == 0)
+                    {
+                        throw new InvalidOperationException($"No public constructors found for {typeof(TImplementation).Name}");
+                    }
+
+                    var constructor = constructors[0]; // Use first constructor
                     var parameters = constructor.GetParameters();
                     var args = new object[parameters.Length];
                     
                     for (int i = 0; i < parameters.Length; i++)
                     {
-                        args[i] = container.GetService(parameters[i].ParameterType);
+                        try
+                        {
+                            args[i] = container.GetService(parameters[i].ParameterType);
+                        }
+                        catch (Exception ex)
+                        {
+                            throw new InvalidOperationException(
+                                $"Failed to resolve dependency {parameters[i].ParameterType.Name} for {typeof(TImplementation).Name}: {ex.Message}", 
+                                ex);
+                        }
                     }
                     
                     return (TImplementation)Activator.CreateInstance(typeof(TImplementation), args);
@@ -79,12 +95,19 @@ namespace VSIXExtention.Services
             // Try to create using factory
             if (_factories.TryGetValue(serviceType, out var factory))
             {
-                var instance = factory(this);
-                _services.TryAdd(serviceType, instance);
-                return instance;
+                try
+                {
+                    var instance = factory(this);
+                    _services.TryAdd(serviceType, instance);
+                    return instance;
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException($"Failed to create service of type {serviceType.Name}: {ex.Message}", ex);
+                }
             }
 
-            throw new InvalidOperationException($"Service of type {serviceType.Name} is not registered.");
+            throw new InvalidOperationException($"Service of type {serviceType.Name} is not registered. Available services: {string.Join(", ", _factories.Keys)}");
         }
 
         /// <summary>
@@ -93,6 +116,29 @@ namespace VSIXExtention.Services
         public bool IsRegistered<TInterface>()
         {
             return _services.ContainsKey(typeof(TInterface)) || _factories.ContainsKey(typeof(TInterface));
+        }
+
+        /// <summary>
+        /// Helper method to register MediatR services with their dependencies
+        /// </summary>
+        public void RegisterMediatRServices(IServiceProvider vsServiceProvider)
+        {
+            // Register VS service provider first
+            RegisterInstance<IServiceProvider>(vsServiceProvider);
+
+            // Core services
+            RegisterSingleton<IWorkspaceService, Workspace>();
+            RegisterSingleton<IMediatRContextService, MediatRContext>();
+            RegisterSingleton<IMediatRCacheService, MediatRCacheService>();
+            RegisterSingleton<IMediatRHandlerFinder, MediatRHandlerFinder>();
+            RegisterSingleton<IMediatRNavigationService, MediatRNavigationService>();
+            RegisterSingleton<INavigationUIService, NavigationUI>();
+            RegisterSingleton<IDocumentEventService, DocumentEventsService>();
+            
+            // Main orchestrator
+            RegisterSingleton<IMediatRCommandHandler, MediatRCommandHandler>();
+
+            System.Diagnostics.Debug.WriteLine("Service Container: MediatR services registered successfully");
         }
 
         public void Dispose()
