@@ -9,9 +9,9 @@ using System.ComponentModel.Design;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using VSIXExtention.DI;
 using VSIXExtention.Interfaces;
 using VSIXExtention.Services;
-using ServiceContainer = VSIXExtention.Services.ServiceContainer;
 
 namespace VSIXExtention
 {
@@ -30,13 +30,13 @@ namespace VSIXExtention
         public const int GoToMediatRImplementationCommandId = 0x0100;
         public const int GoToMediatRImplementationContextCommandId = 0x0102;
 
-        private ServiceContainer _serviceContainer;
+        private ExtensionServiceContainer _serviceContainer;
 
         #region Package Members
 
         protected override async Task InitializeAsync(CancellationToken cancellationToken, IProgress<ServiceProgressData> progress)
         {
-            System.Diagnostics.Debug.WriteLine("MediatR Extension: Starting initialization...");
+            System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: Starting initialization...");
 
             await this.JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
 
@@ -48,12 +48,12 @@ namespace VSIXExtention
 
             await base.InitializeAsync(cancellationToken, progress);
 
-            System.Diagnostics.Debug.WriteLine("MediatR Extension: Initialization complete");
+            System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: Initialization complete");
         }
 
         private async Task InitializeServicesAsync()
         {
-            _serviceContainer = new ServiceContainer();
+            _serviceContainer = new ExtensionServiceContainer();
 
             // Register all MediatR services with their dependencies
             _serviceContainer.RegisterMediatRServices(this);
@@ -61,12 +61,18 @@ namespace VSIXExtention
             // Initialize the service locator
             ServiceLocator.Initialize(_serviceContainer);
 
-            // Initialize document event service
-            var documentEventService = _serviceContainer.GetService<IDocumentEventService>();
+            // DO NOT register solution services here - they will be registered when a solution opens
+            // _serviceContainer.RegisterSolutionServices();
 
-            documentEventService.Initialize();
+            // Create and initialize solution context manager - this will handle solution events
+            var solutionContextManager = new SolutionContextManager();
+            
+            // Register the solution context manager as a singleton so it can be disposed properly
+            _serviceContainer.RegisterInstance<SolutionContextManager>(solutionContextManager);
 
-            System.Diagnostics.Debug.WriteLine("MediatR Extension: Services initialized");
+            await solutionContextManager.InitializeAsync();
+
+            System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: Services initialized");
         }
 
         private async Task RegisterCommandsAsync()
@@ -121,11 +127,11 @@ namespace VSIXExtention
 
                 commandService.AddCommand(contextMenuItem);
 
-                System.Diagnostics.Debug.WriteLine("MediatR Extension: Commands registered successfully");
+                System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: Commands registered successfully");
             }
             else
             {
-                System.Diagnostics.Debug.WriteLine("MediatR Extension: ERROR - Command service is null!");
+                System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: ERROR - Command service is null!");
             }
         }
 
@@ -143,7 +149,7 @@ namespace VSIXExtention
                     return;
                 }
 
-                var contextService = ServiceLocator.GetService<IMediatRContextService>();
+                var contextService = _serviceContainer.GetService<IMediatRContextService>();
                 bool isMediatRContext = await contextService.IsInMediatRContextAsync(textView);
 
                 command.Visible = isMediatRContext;
@@ -152,7 +158,7 @@ namespace VSIXExtention
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Extension: Error checking MediatR context: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Package: Error checking MediatR context: {ex.Message}");
                 command.Visible = false;
                 command.Enabled = false;
             }
@@ -167,13 +173,13 @@ namespace VSIXExtention
                 var textView = GetActiveTextView();
                 if (textView == null)
                 {
-                    await ShowMessageAsync("No active text view found.", "MediatR Extension");
+                    await ShowMessageAsync("No active text view found.", "MediatRNavigationExtension: Package");
                     return;
                 }
 
                 int position = GetCaretOrSelectionPosition(textView);
 
-                var commandHandler = ServiceLocator.GetService<IMediatRCommandHandler>();
+                var commandHandler = _serviceContainer.GetService<IMediatRCommandHandler>();
                 bool success = await commandHandler.ExecuteGoToImplementationAsync(textView, position);
 
                 // Error messages are handled within the command handler
@@ -181,8 +187,8 @@ namespace VSIXExtention
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Extension: Error in ExecuteGoToImplementation: {ex.Message}");
-                await ShowMessageAsync($"An error occurred: {ex.Message}", "MediatR Extension Error");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Package: Error in ExecuteGoToImplementation: {ex.Message}");
+                await ShowMessageAsync($"An error occurred: {ex.Message}", "MediatRNavigationExtension: Package Error");
             }
         }
 
@@ -228,14 +234,20 @@ namespace VSIXExtention
             {
                 try
                 {
-                    // Dispose service container which will dispose all services
+                    // Dispose solution context manager first (which will clean up solution services)
+                    var solutionContextManager = _serviceContainer?.TryGetService<SolutionContextManager>();
+                    solutionContextManager?.Dispose();
+
+                    // Dispose service locator and containers
                     ServiceLocator.Dispose();
                     _serviceContainer?.Dispose();
-                    System.Diagnostics.Debug.WriteLine("MediatR Extension: Package disposed successfully");
+                    _serviceContainer = null;
+                    
+                    System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: Package disposed successfully");
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"MediatR Extension: Error disposing package: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Package: Error disposing package: {ex.Message}");
                 }
             }
 

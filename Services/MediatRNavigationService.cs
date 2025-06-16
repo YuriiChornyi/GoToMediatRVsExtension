@@ -24,7 +24,7 @@ namespace VSIXExtention.Services
         {
             if (!handlers.Any())
             {
-                System.Diagnostics.Debug.WriteLine("MediatR Navigation: No handlers to navigate to");
+                System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: MediatRNavigationService: No handlers to navigate to");
                 return false;
             }
 
@@ -60,24 +60,24 @@ namespace VSIXExtention.Services
         {
             if (location?.SourceTree?.FilePath == null)
             {
-                System.Diagnostics.Debug.WriteLine("MediatR Navigation: Location or FilePath is null");
+                System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: MediatRNavigationService: Location or FilePath is null");
                 return false;
             }
 
             var filePath = location.SourceTree.FilePath;
             var lineSpan = location.GetLineSpan();
             
-            System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Navigating to {filePath} at line {lineSpan.StartLinePosition.Line + 1}");
+            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: Navigating to {filePath} at line {lineSpan.StartLinePosition.Line + 1}");
             
             // Check if file exists first
             if (!System.IO.File.Exists(filePath))
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Navigation: File not found: {filePath}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: File not found: {filePath}");
                 return false;
             }
             
             var result = await OpenDocumentAndNavigate(filePath, lineSpan.StartLinePosition);
-            System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Navigation result: {result}");
+            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: Navigation result: {result}");
             return result;
         }
 
@@ -198,12 +198,12 @@ namespace VSIXExtention.Services
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 
-                System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Attempting to open file: {filePath} at line {linePosition.Line + 1}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: Attempting to open file: {filePath} at line {linePosition.Line + 1}");
 
                 var dte = _serviceProvider.GetService(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
                 if (dte?.ItemOperations == null)
                 {
-                    System.Diagnostics.Debug.WriteLine("MediatR Navigation: Failed to get DTE or ItemOperations");
+                    System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: MediatRNavigationService: Failed to get DTE or ItemOperations");
                     return false;
                 }
 
@@ -212,31 +212,31 @@ namespace VSIXExtention.Services
                 {
                     var selection = textDocument.Selection;
                     selection.MoveToLineAndOffset(linePosition.Line + 1, linePosition.Character + 1, false);
-                    System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Successfully navigated to {filePath} at line {linePosition.Line + 1}");
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: Successfully navigated to {filePath} at line {linePosition.Line + 1}");
                     return true;
                 }
                 
                 // Alternative approach if the above fails
                 if (window?.Document != null)
                 {
-                    System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Trying alternative approach for {filePath}");
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: Trying alternative approach for {filePath}");
                     var document = window.Document;
                     var altTextDocument = document.Object("TextDocument") as EnvDTE.TextDocument;
                     if (altTextDocument != null)
                     {
                         var selection = altTextDocument.Selection;
                         selection.MoveToLineAndOffset(linePosition.Line + 1, linePosition.Character + 1, false);
-                        System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Successfully navigated to {filePath} at line {linePosition.Line + 1} (alternative approach)");
+                        System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: Successfully navigated to {filePath} at line {linePosition.Line + 1} (alternative approach)");
                         return true;
                     }
                 }
 
-                System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Failed to get TextDocument from window for {filePath}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: Failed to get TextDocument from window for {filePath}");
                 return false;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Navigation: Error opening document {filePath}: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: Error opening document {filePath}: {ex.Message}");
                 return false;
             }
         }

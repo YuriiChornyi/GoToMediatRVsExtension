@@ -5,16 +5,14 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using VSIXExtention.Interfaces;
+using VSIXExtention.DI;
 
 namespace VSIXExtention.Services
 {
     public class MediatRContext : IMediatRContextService
     {
-        private readonly IWorkspaceService _workspaceService;
-
-        public MediatRContext(IWorkspaceService workspaceService)
+        public MediatRContext()
         {
-            _workspaceService = workspaceService ?? throw new ArgumentNullException(nameof(workspaceService));
         }
 
         public async Task<bool> IsInMediatRContextAsync(ITextView textView)
@@ -24,7 +22,11 @@ namespace VSIXExtention.Services
                 if (!IsValidContext(textView))
                     return false;
 
-                var document = _workspaceService.GetDocumentFromTextView(textView);
+                var workspaceService = ServiceLocator.TryGetService<IWorkspaceService>();
+                if (workspaceService == null)
+                    return false;
+
+                var document = workspaceService.GetDocumentFromTextView(textView);
                 if (document == null)
                     return false;
 
@@ -33,7 +35,7 @@ namespace VSIXExtention.Services
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Context: Error checking context: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRContext: Error checking context: {ex.Message}");
                 return false;
             }
         }
@@ -42,7 +44,11 @@ namespace VSIXExtention.Services
         {
             try
             {
-                var document = _workspaceService.GetDocumentFromTextView(textView);
+                var workspaceService = ServiceLocator.TryGetService<IWorkspaceService>();
+                if (workspaceService == null)
+                    return null;
+
+                var document = workspaceService.GetDocumentFromTextView(textView);
                 if (document == null)
                     return null;
 
@@ -86,7 +92,7 @@ namespace VSIXExtention.Services
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Context: Error getting type symbol: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRContext: Error getting type symbol: {ex.Message}");
                 return null;
             }
         }
@@ -103,7 +109,11 @@ namespace VSIXExtention.Services
             if (contentType?.TypeName != "CSharp")
                 return false;
 
-            var filePath = _workspaceService.GetFilePathFromTextView(textView);
+            var workspaceService = ServiceLocator.TryGetService<IWorkspaceService>();
+            if (workspaceService == null)
+                return false;
+
+            var filePath = workspaceService.GetFilePathFromTextView(textView);
 
             // Only process C# files
             if (string.IsNullOrEmpty(filePath) || !filePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))

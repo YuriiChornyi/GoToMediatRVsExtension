@@ -3,54 +3,99 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using VSIXExtention.Interfaces;
+using System.Linq;
 
 namespace VSIXExtention.Services
 {
     public class MediatRCacheService : IMediatRCacheService, IDisposable
     {
-        private readonly IWorkspaceService _workspaceService;
         private MediatRCacheManager _cacheManager;
         private bool _disposed = false;
 
-        public MediatRCacheService(IWorkspaceService workspaceService)
+        public MediatRCacheService()
         {
-            _workspaceService = workspaceService ?? throw new ArgumentNullException(nameof(workspaceService));
-
-            // Subscribe to workspace changes to handle solution changes
-            _workspaceService.WorkspaceChanged += OnWorkspaceChanged;
         }
 
         public async Task InitializeAsync(Solution solution)
         {
-            if (_cacheManager != null)
+            try
             {
-                _cacheManager.Dispose();
+                if (_cacheManager != null)
+                {
+                    _cacheManager.Dispose();
+                }
+
+                _cacheManager = new MediatRCacheManager();
+
+                // Handle null or empty solution file path
+                string solutionPath = solution?.FilePath;
+                if (string.IsNullOrEmpty(solutionPath))
+                {
+                    // Generate a fallback path using solution ID or first project name
+                    string solutionName = "UnknownSolution";
+                    
+                    if (solution != null)
+                    {
+                        // Try to get a meaningful name from the first project
+                        var firstProject = solution.Projects.FirstOrDefault();
+                        if (firstProject != null && !string.IsNullOrEmpty(firstProject.Name))
+                        {
+                            solutionName = firstProject.Name;
+                        }
+                        else
+                        {
+                            // Fall back to solution ID
+                            solutionName = solution.Id.ToString();
+                        }
+                    }
+                    
+                    var tempDir = System.IO.Path.GetTempPath();
+                    solutionPath = System.IO.Path.Combine(tempDir, $"MediatRTemp_{solutionName}.sln");
+                    
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CacheService: Using fallback solution path: {solutionPath}");
+                }
+
+                await _cacheManager.InitializeAsync(solutionPath);
+
+                System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: CacheService: Initialized for new solution");
             }
-
-            _cacheManager = new MediatRCacheManager();
-            await _cacheManager.InitializeAsync(solution);
-
-            System.Diagnostics.Debug.WriteLine("MediatR Cache Service: Initialized for new solution");
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CacheService: Error during initialization: {ex.Message}");
+                
+                // Create a minimal cache manager even if initialization fails
+                if (_cacheManager == null)
+                {
+                    _cacheManager = new MediatRCacheManager();
+                    System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: CacheService: Created minimal cache manager after initialization failure");
+                }
+            }
         }
 
         public List<MediatRPatternMatcher.MediatRHandlerInfo> GetCachedHandlers(string requestTypeName)
         {
             if (_cacheManager == null)
             {
-                EnsureCacheInitialized();
-            }
+                System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: CacheService: CacheManager is NULL");
 
-            return _cacheManager?.GetCachedHandlers(requestTypeName);
+                return new List<MediatRPatternMatcher.MediatRHandlerInfo>();
+            }
+            else
+            {
+                return _cacheManager?.GetCachedHandlers(requestTypeName);
+            }
         }
 
         public void CacheHandlers(string requestTypeName, List<MediatRPatternMatcher.MediatRHandlerInfo> handlers)
         {
             if (_cacheManager == null)
             {
-                EnsureCacheInitialized();
+                System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: CacheService: CacheManager is NULL");
             }
-
-            _cacheManager?.CacheHandlers(requestTypeName, handlers);
+            else
+            {
+                _cacheManager?.CacheHandlers(requestTypeName, handlers);
+            }
         }
 
         public void InvalidateHandlersForRequestType(string requestTypeName)
@@ -71,78 +116,21 @@ namespace VSIXExtention.Services
             }
         }
 
-        private void EnsureCacheInitialized()
-        {
-            try
-            {
-                var workspace = _workspaceService.GetWorkspace();
-                if (workspace?.CurrentSolution != null)
-                {
-                    _ = Task.Run(async () => await InitializeAsync(workspace.CurrentSolution));
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache Service: Error initializing cache: {ex.Message}");
-            }
-        }
-
-        private async void OnWorkspaceChanged(object sender, WorkspaceChangeEventArgs e)
-        {
-            try
-            {
-                switch (e.Kind)
-                {
-                    case WorkspaceChangeKind.SolutionAdded:
-                        System.Diagnostics.Debug.WriteLine("MediatR Cache Service: New solution loaded, reinitializing cache");
-                        await InitializeAsync(e.NewSolution);
-                        break;
-
-                    case WorkspaceChangeKind.SolutionCleared:
-                    case WorkspaceChangeKind.SolutionRemoved:
-                    case WorkspaceChangeKind.SolutionReloaded:
-                        System.Diagnostics.Debug.WriteLine("MediatR Cache Service: Solution closing, saving cache");
-                        await SaveCacheAsync();
-                        break;
-
-                    case WorkspaceChangeKind.DocumentAdded:
-                    case WorkspaceChangeKind.DocumentRemoved:
-                        var document = e.NewSolution?.GetDocument(e.DocumentId) ?? e.OldSolution?.GetDocument(e.DocumentId);
-
-                        if (document?.FilePath == null) break;
-
-                        if (document.FilePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
-                        {
-                            System.Diagnostics.Debug.WriteLine("MediatR Cache Service: Relevant document changed, clearing cache");
-                            ClearCache();
-                        }
-                        break;
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache Service: Error handling workspace change: {ex.Message}");
-            }
-        }
-
         public void Dispose()
         {
             if (!_disposed)
             {
                 try
                 {
-                    // Unsubscribe from workspace events
-                    _workspaceService.WorkspaceChanged -= OnWorkspaceChanged;
-
                     // Dispose cache manager
                     _cacheManager?.Dispose();
                     _cacheManager = null;
 
-                    System.Diagnostics.Debug.WriteLine("MediatR Cache Service: Disposed successfully");
+                    System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: CacheService: Disposed successfully");
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"MediatR Cache Service: Error during disposal: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CacheService: Error during disposal: {ex.Message}");
                 }
                 finally
                 {

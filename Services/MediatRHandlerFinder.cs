@@ -4,25 +4,31 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using VSIXExtention.Interfaces;
+using VSIXExtention.DI;
 
 namespace VSIXExtention.Services
 {
     public class MediatRHandlerFinder : IMediatRHandlerFinder
     {
-        private readonly IWorkspaceService _workspaceService;
-        private readonly IMediatRCacheService _cacheService;
-
-        public MediatRHandlerFinder(IWorkspaceService workspaceService, IMediatRCacheService cacheService)
+        public MediatRHandlerFinder()
         {
-            _workspaceService = workspaceService ?? throw new ArgumentNullException(nameof(workspaceService));
-            _cacheService = cacheService ?? throw new ArgumentNullException(nameof(cacheService));
         }
 
         public async Task<List<MediatRPatternMatcher.MediatRHandlerInfo>> FindHandlersAsync(INamedTypeSymbol requestTypeSymbol)
         {
             try
             {
-                var workspace = _workspaceService.GetWorkspace();
+                // Get services from ServiceLocator (solution-scoped)
+                var workspaceService = ServiceLocator.TryGetService<IWorkspaceService>();
+                var cacheService = ServiceLocator.TryGetService<IMediatRCacheService>();
+                
+                if (workspaceService == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: MediatRHandlerFinder: No workspace service available - solution may not be open");
+                    return new List<MediatRPatternMatcher.MediatRHandlerInfo>();
+                }
+
+                var workspace = workspaceService.GetWorkspace();
                 if (workspace?.CurrentSolution == null)
                     return new List<MediatRPatternMatcher.MediatRHandlerInfo>();
 
@@ -31,12 +37,15 @@ namespace VSIXExtention.Services
                 if (requestInfo == null)
                     return new List<MediatRPatternMatcher.MediatRHandlerInfo>();
 
-                // Try cache first
-                var cachedHandlers = _cacheService.GetCachedHandlers(requestInfo.RequestTypeName);
-                if (cachedHandlers != null)
+                // Try cache first (if available)
+                if (cacheService != null)
                 {
-                    System.Diagnostics.Debug.WriteLine($"MediatR Handler Finder: Found {cachedHandlers.Count} cached handlers for {requestInfo.RequestTypeName}");
-                    return cachedHandlers;
+                    var cachedHandlers = cacheService.GetCachedHandlers(requestInfo.RequestTypeName);
+                    if (cachedHandlers != null)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRHandlerFinder: Found {cachedHandlers.Count} cached handlers for {requestInfo.RequestTypeName}");
+                        return cachedHandlers;
+                    }
                 }
 
                 // Find handlers using the pattern matcher
@@ -50,15 +59,15 @@ namespace VSIXExtention.Services
                     handlers = await MediatRPatternMatcher.FindHandlersInSolution(workspace.CurrentSolution, requestInfo.RequestTypeName);
                 }
 
-                // Cache the results
-                _cacheService.CacheHandlers(requestInfo.RequestTypeName, handlers);
+                // Cache the results (if cache service is available)
+                cacheService?.CacheHandlers(requestInfo.RequestTypeName, handlers);
 
-                System.Diagnostics.Debug.WriteLine($"MediatR Handler Finder: Found {handlers.Count} handlers for {requestInfo.RequestTypeName}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRHandlerFinder: Found {handlers.Count} handlers for {requestInfo.RequestTypeName}");
                 return handlers;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Handler Finder: Error finding handlers: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRHandlerFinder: Error finding handlers: {ex.Message}");
                 return new List<MediatRPatternMatcher.MediatRHandlerInfo>();
             }
         }
@@ -67,7 +76,17 @@ namespace VSIXExtention.Services
         {
             try
             {
-                var workspace = _workspaceService.GetWorkspace();
+                // Get services from ServiceLocator (solution-scoped)
+                var workspaceService = ServiceLocator.TryGetService<IWorkspaceService>();
+                var cacheService = ServiceLocator.TryGetService<IMediatRCacheService>();
+                
+                if (workspaceService == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: MediatRHandlerFinder: No workspace service available - solution may not be open");
+                    return new List<MediatRPatternMatcher.MediatRHandlerInfo>();
+                }
+
+                var workspace = workspaceService.GetWorkspace();
                 
                 if (workspace?.CurrentSolution == null)
                     return new List<MediatRPatternMatcher.MediatRHandlerInfo>();
@@ -78,20 +97,23 @@ namespace VSIXExtention.Services
                 // Get all request info to cache individual handler types
                 var allRequestInfo = MediatRPatternMatcher.GetAllRequestInfo(requestTypeSymbol, semanticModel);
                 
-                // Group handlers by type and cache them individually
-                foreach (var requestInfo in allRequestInfo)
+                // Group handlers by type and cache them individually (if cache service is available)
+                if (cacheService != null)
                 {
-                    var handlersForThisType = allHandlers
-                        .Where(h => h.RequestTypeName == requestInfo.RequestTypeName && h.IsNotificationHandler == requestInfo.IsNotification)
-                        .ToList();
-                    
-                    if (handlersForThisType.Any())
+                    foreach (var requestInfo in allRequestInfo)
                     {
-                        _cacheService.CacheHandlers(requestInfo.RequestTypeName, handlersForThisType);
+                        var handlersForThisType = allHandlers
+                            .Where(h => h.RequestTypeName == requestInfo.RequestTypeName && h.IsNotificationHandler == requestInfo.IsNotification)
+                            .ToList();
+                        
+                        if (handlersForThisType.Any())
+                        {
+                            cacheService.CacheHandlers(requestInfo.RequestTypeName, handlersForThisType);
+                        }
                     }
                 }
 
-                System.Diagnostics.Debug.WriteLine($"MediatR Handler Finder: Found {allHandlers.Count} total handlers for {requestTypeSymbol.Name}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRHandlerFinder: Found {allHandlers.Count} total handlers for {requestTypeSymbol.Name}");
                 
                 // Log details about what was found
                 var requestHandlers = allHandlers.Where(h => !h.IsNotificationHandler).ToList();
@@ -111,7 +133,7 @@ namespace VSIXExtention.Services
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Handler Finder: Error finding all handlers: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRHandlerFinder: Error finding all handlers: {ex.Message}");
                 return new List<MediatRPatternMatcher.MediatRHandlerInfo>();
             }
         }

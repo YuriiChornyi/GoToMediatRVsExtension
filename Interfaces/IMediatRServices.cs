@@ -12,10 +12,10 @@ namespace VSIXExtention.Interfaces
     /// </summary>
     public interface IWorkspaceService
     {
+        void InitializeWorkspace();
         VisualStudioWorkspace GetWorkspace();
         Document GetDocumentFromTextView(ITextView textView);
         string GetFilePathFromTextView(ITextView textView);
-        event EventHandler<WorkspaceChangeEventArgs> WorkspaceChanged;
     }
 
     /// <summary>
@@ -74,7 +74,6 @@ namespace VSIXExtention.Interfaces
     /// </summary>
     public interface IDocumentEventService
     {
-        event EventHandler<string> DocumentSaved;
         void Initialize();
         void Dispose();
     }

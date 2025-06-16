@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.Text.Editor;
 using VSIXExtention.Interfaces;
+using VSIXExtention.DI;
 
 namespace VSIXExtention.Services
 {
@@ -12,26 +13,34 @@ namespace VSIXExtention.Services
         private readonly IMediatRHandlerFinder _handlerFinder;
         private readonly IMediatRNavigationService _navigationService;
         private readonly INavigationUIService _uiService;
-        private readonly IWorkspaceService _workspaceService;
 
         public MediatRCommandHandler(
             IMediatRContextService contextService,
             IMediatRHandlerFinder handlerFinder,
             IMediatRNavigationService navigationService,
-            INavigationUIService uiService,
-            IWorkspaceService workspaceService)
+            INavigationUIService uiService)
         {
             _contextService = contextService ?? throw new ArgumentNullException(nameof(contextService));
             _handlerFinder = handlerFinder ?? throw new ArgumentNullException(nameof(handlerFinder));
             _navigationService = navigationService ?? throw new ArgumentNullException(nameof(navigationService));
             _uiService = uiService ?? throw new ArgumentNullException(nameof(uiService));
-            _workspaceService = workspaceService ?? throw new ArgumentNullException(nameof(workspaceService));
         }
 
         public async Task<bool> ExecuteGoToImplementationAsync(ITextView textView, int position)
         {
             try
             {
+                // Get workspace service from ServiceLocator (solution-scoped)
+                var workspaceService = ServiceLocator.TryGetService<IWorkspaceService>();
+                if (workspaceService == null)
+                {
+                    await _uiService.ShowErrorMessageAsync(
+                        "No solution is currently open or workspace service is not available.\n\n" +
+                        "Please open a solution first.",
+                        "MediatR Extension");
+                    return false;
+                }
+
                 // Step 1: Get the MediatR type symbol
                 var typeSymbol = await _contextService.GetMediatRTypeSymbolAsync(textView, position);
                 if (typeSymbol == null)
@@ -46,7 +55,7 @@ namespace VSIXExtention.Services
                 }
 
                 // Step 2: Get semantic model for the document
-                var document = _workspaceService.GetDocumentFromTextView(textView);
+                var document = workspaceService.GetDocumentFromTextView(textView);
                 var semanticModel = document != null ? await document.GetSemanticModelAsync() : null;
 
                 // Step 3: Check if this class implements both IRequest and INotification
@@ -91,7 +100,7 @@ namespace VSIXExtention.Services
                     var requestHandlers = allHandlers.Where(h => !h.IsNotificationHandler).ToList();
                     var notificationHandlers = allHandlers.Where(h => h.IsNotificationHandler).ToList();
                     
-                    System.Diagnostics.Debug.WriteLine($"MediatR Extension: Found {requestHandlers.Count} request handler(s) and {notificationHandlers.Count} notification handler(s) for {typeSymbol.Name}");
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRCommandHandler: Found {requestHandlers.Count} request handler(s) and {notificationHandlers.Count} notification handler(s) for {typeSymbol.Name}");
                 }
 
                 // Step 6: Navigate to handlers
@@ -101,7 +110,7 @@ namespace VSIXExtention.Services
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Command Handler: Error executing go-to-implementation: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRCommandHandler: {ex.Message}");
                 await _uiService.ShowErrorMessageAsync($"An error occurred: {ex.Message}", "MediatR Extension Error");
                 return false;
             }

@@ -1,12 +1,12 @@
+using Microsoft.CodeAnalysis;
+using Microsoft.VisualStudio.Threading;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.CodeAnalysis;
-using Microsoft.VisualStudio.Threading;
-using Newtonsoft.Json;
 
 namespace VSIXExtention
 {
@@ -26,48 +26,43 @@ namespace VSIXExtention
 
     public class MediatRCacheManager : IDisposable
     {
-        private readonly ConcurrentDictionary<string, List<CachedHandlerInfo>> _handlerCache 
+        private readonly ConcurrentDictionary<string, List<CachedHandlerInfo>> _handlerCache
             = new ConcurrentDictionary<string, List<CachedHandlerInfo>>();
-        
-        private readonly ConcurrentDictionary<string, DateTime> _recentlyUsedRequestTypes 
+
+        private readonly ConcurrentDictionary<string, DateTime> _recentlyUsedRequestTypes
             = new ConcurrentDictionary<string, DateTime>();
-        
+
         private readonly TimeSpan _recentUsageWindow = TimeSpan.FromMinutes(10);
-        
+
         // Persistent cache storage
         private string _currentSolutionPath;
         private string _cacheFilePath;
         private readonly SemaphoreSlim _cacheFileSemaphore = new SemaphoreSlim(1, 1);
         private bool _cacheLoaded = false;
-        private System.Threading.Timer _periodicSaveTimer;
+        private Timer _periodicSaveTimer;
         private bool _cacheIsDirty = false;
         private readonly TimeSpan _periodicSaveInterval = TimeSpan.FromMinutes(2);
         private bool _disposed = false;
+        private bool _manuallyCleared = false; // Track if cache was manually cleared
 
-        // Reference to navigation service for advanced validation (optional)
-        private readonly WeakReference _navigationServiceRef;
-
-        public MediatRCacheManager(object navigationService = null)
+        public MediatRCacheManager()
         {
-            _navigationServiceRef = navigationService != null ? new WeakReference(navigationService) : null;
         }
 
         public bool IsCacheLoaded => _cacheLoaded;
         public bool IsCacheDirty => _cacheIsDirty;
         public string CurrentSolutionPath => _currentSolutionPath;
 
-        public async Task InitializeAsync(Solution solution)
+        public async Task InitializeAsync(string solutionPath)
         {
-            if (solution?.FilePath == null) return;
-
-            _currentSolutionPath = solution.FilePath;
+            _currentSolutionPath = solutionPath;
             _cacheFilePath = GetCacheFilePath(_currentSolutionPath);
-            
+
             await LoadCacheFromFileAsync();
             _cacheLoaded = true;
-            
+
             StartPeriodicSaveTimer();
-            System.Diagnostics.Debug.WriteLine($"MediatR Cache: Initialized for solution {_currentSolutionPath}");
+            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Initialized for solution {_currentSolutionPath}");
         }
 
         public List<MediatRPatternMatcher.MediatRHandlerInfo> GetCachedHandlers(string requestTypeName)
@@ -76,14 +71,14 @@ namespace VSIXExtention
             {
                 // Track usage for smart rebuilding
                 _recentlyUsedRequestTypes.AddOrUpdate(requestTypeName, DateTime.Now, (_, __) => DateTime.Now);
-                
+
                 // Update last used time for these handlers
                 var now = DateTime.Now;
                 foreach (var cachedHandler in cachedHandlers)
                 {
                     cachedHandler.LastUsed = now;
                 }
-                
+
                 return cachedHandlers.Select(ch => ch.Handler).ToList();
             }
             return null;
@@ -97,7 +92,7 @@ namespace VSIXExtention
                 _handlerCache.AddOrUpdate(requestTypeName, cachedHandlers, (_, __) => cachedHandlers);
                 _recentlyUsedRequestTypes.AddOrUpdate(requestTypeName, DateTime.Now, (_, __) => DateTime.Now);
                 _cacheIsDirty = true;
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Cached {handlers.Count} handlers for {requestTypeName}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Cached {handlers.Count} handlers for {requestTypeName}");
             }
         }
 
@@ -106,13 +101,13 @@ namespace VSIXExtention
             if (newHandlers?.Any() != true) return;
 
             var groupedHandlers = newHandlers.GroupBy(h => h.RequestTypeName).ToList();
-            
+
             foreach (var group in groupedHandlers)
             {
                 var requestTypeName = group.Key;
                 var handlers = group.ToList();
                 var newCachedHandlers = handlers.Select(h => new CachedHandlerInfo(h)).ToList();
-                
+
                 _handlerCache.AddOrUpdate(requestTypeName, newCachedHandlers, (key, existingHandlers) =>
                 {
                     // Remove existing handlers with same type name, add new ones
@@ -120,12 +115,12 @@ namespace VSIXExtention
                         .Where(existing => !handlers.Any(newHandler => newHandler.HandlerTypeName == existing.Handler.HandlerTypeName))
                         .Concat(newCachedHandlers)
                         .ToList();
-                    
-                    System.Diagnostics.Debug.WriteLine($"MediatR Cache: Updated cache for {requestTypeName}, now has {updatedHandlers.Count} handlers");
+
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Updated cache for {requestTypeName}, now has {updatedHandlers.Count} handlers");
                     return updatedHandlers;
                 });
             }
-            
+
             _cacheIsDirty = true;
         }
 
@@ -133,7 +128,8 @@ namespace VSIXExtention
         {
             _handlerCache.Clear();
             _cacheIsDirty = true;
-            System.Diagnostics.Debug.WriteLine("MediatR Cache: Cache cleared");
+            _manuallyCleared = true; // Mark that cache was manually cleared
+            System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Cache: Cache cleared");
         }
 
         public void InvalidateHandlersForRequestType(string requestTypeName)
@@ -141,7 +137,7 @@ namespace VSIXExtention
             if (_handlerCache.TryRemove(requestTypeName, out var removedHandlers))
             {
                 _cacheIsDirty = true;
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Invalidated cache for {requestTypeName} (removed {removedHandlers.Count} handlers)");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Invalidated cache for {requestTypeName} (removed {removedHandlers.Count} handlers)");
             }
         }
 
@@ -157,16 +153,16 @@ namespace VSIXExtention
         public async Task SaveCacheAsync()
         {
             if (!_cacheLoaded || string.IsNullOrEmpty(_cacheFilePath)) return;
-            
+
             try
             {
                 await SaveCacheToFileAsync();
                 _cacheIsDirty = false;
-                System.Diagnostics.Debug.WriteLine("MediatR Cache: Manual save completed");
+                System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Cache: Manual save completed");
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Error in manual save: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Error in manual save: {ex.Message}");
             }
         }
 
@@ -174,10 +170,31 @@ namespace VSIXExtention
         {
             try
             {
+                // Handle null or empty solution path
+                if (string.IsNullOrEmpty(solutionPath))
+                {
+                    var tempDir = System.IO.Path.GetTempPath();
+                    var cacheName = $"MediatRExtension_NoSolution_{DateTime.Now.Ticks}.cache";
+                    var fallbackPath = System.IO.Path.Combine(tempDir, cacheName);
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Using fallback cache path: {fallbackPath}");
+                    return fallbackPath;
+                }
+
                 var solutionDir = System.IO.Path.GetDirectoryName(solutionPath);
                 var solutionName = System.IO.Path.GetFileNameWithoutExtension(solutionPath);
+
+                // Handle case where solution directory or name might be null/empty
+                if (string.IsNullOrEmpty(solutionDir) || string.IsNullOrEmpty(solutionName))
+                {
+                    var tempDir = System.IO.Path.GetTempPath();
+                    var safeSolutionName = !string.IsNullOrEmpty(solutionName) ? solutionName : "UnknownSolution";
+                    var fallbackPath = System.IO.Path.Combine(tempDir, $"MediatRExtension_{safeSolutionName}_{solutionPath.GetHashCode()}.cache");
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Using temp directory for cache: {fallbackPath}");
+                    return fallbackPath;
+                }
+
                 var vsDir = System.IO.Path.Combine(solutionDir, ".vs");
-                
+
                 if (System.IO.Directory.Exists(vsDir))
                 {
                     return System.IO.Path.Combine(vsDir, $"MediatRExtension_{solutionName}.cache");
@@ -190,8 +207,21 @@ namespace VSIXExtention
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Error creating cache file path: {ex.Message}");
-                return null;
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Error creating cache file path: {ex.Message}");
+
+                // Final fallback - use temp directory with timestamp
+                try
+                {
+                    var tempDir = System.IO.Path.GetTempPath();
+                    var fallbackName = $"MediatRExtension_Fallback_{DateTime.Now.Ticks}.cache";
+                    var fallbackPath = System.IO.Path.Combine(tempDir, fallbackName);
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Using final fallback cache path: {fallbackPath}");
+                    return fallbackPath;
+                }
+                catch
+                {
+                    return null;
+                }
             }
         }
 
@@ -199,9 +229,15 @@ namespace VSIXExtention
         {
             try
             {
+                if (string.IsNullOrEmpty(_cacheFilePath))
+                {
+                    System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Cache: Cache file path is null/empty, skipping file operations");
+                    return;
+                }
+
                 if (!System.IO.File.Exists(_cacheFilePath))
                 {
-                    System.Diagnostics.Debug.WriteLine("MediatR Cache: No cache file found, creating empty cache file");
+                    System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Cache: No cache file found, creating empty cache file");
                     await CreateEmptyCacheFileAsync();
                     return;
                 }
@@ -211,7 +247,7 @@ namespace VSIXExtention
                 {
                     var json = System.IO.File.ReadAllText(_cacheFilePath);
                     var cacheData = JsonConvert.DeserializeObject<PersistentCacheData>(json);
-                    
+
                     if (cacheData?.CacheVersion == "1.0" && cacheData.SolutionPath == _currentSolutionPath)
                     {
                         // Restore handler cache
@@ -235,11 +271,11 @@ namespace VSIXExtention
                             }
                         }
 
-                        System.Diagnostics.Debug.WriteLine($"MediatR Cache: Loaded cache with {_handlerCache.Count} handler types and {_recentlyUsedRequestTypes.Count} recent types");
+                        System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Loaded cache with {_handlerCache.Count} handler types and {_recentlyUsedRequestTypes.Count} recent types");
                     }
                     else
                     {
-                        System.Diagnostics.Debug.WriteLine("MediatR Cache: Cache file is invalid or for different solution, recreating cache file");
+                        System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Cache: Cache file is invalid or for different solution, recreating cache file");
                         // Clear memory cache and recreate file for invalid cache
                         _handlerCache.Clear();
                         _recentlyUsedRequestTypes.Clear();
@@ -252,8 +288,11 @@ namespace VSIXExtention
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Error loading cache from file: {ex.Message}, will create fresh cache file when needed");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Error loading cache from file: {ex.Message}, will create fresh cache file when needed");
                 // Don't create empty cache file immediately on error - let it be created when first needed
+                // Clear any partial data that might have been loaded
+                _handlerCache.Clear();
+                _recentlyUsedRequestTypes.Clear();
             }
         }
 
@@ -261,6 +300,12 @@ namespace VSIXExtention
         {
             try
             {
+                if (string.IsNullOrEmpty(_cacheFilePath))
+                {
+                    System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Cache: Cannot create empty cache file - cache file path is null/empty");
+                    return;
+                }
+
                 var emptyCacheData = new PersistentCacheData
                 {
                     SolutionPath = _currentSolutionPath,
@@ -271,23 +316,29 @@ namespace VSIXExtention
                 };
 
                 var json = JsonConvert.SerializeObject(emptyCacheData, Formatting.Indented);
-                
+
                 await _cacheFileSemaphore.WaitAsync();
                 try
                 {
+                    // Ensure the directory exists
+                    var directory = System.IO.Path.GetDirectoryName(_cacheFilePath);
+                    if (!string.IsNullOrEmpty(directory) && !System.IO.Directory.Exists(directory))
+                    {
+                        System.IO.Directory.CreateDirectory(directory);
+                    }
+
                     System.IO.File.WriteAllText(_cacheFilePath, json);
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Created empty cache file at {_cacheFilePath}");
                 }
                 finally
                 {
                     _cacheFileSemaphore.Release();
                 }
-
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Created empty cache file at {_cacheFilePath}");
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Error creating empty cache file: {ex.Message}");
-                throw;
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Error creating empty cache file: {ex.Message}");
+                // Don't rethrow - this is not a critical failure
             }
         }
 
@@ -295,7 +346,11 @@ namespace VSIXExtention
         {
             try
             {
-                if (string.IsNullOrEmpty(_cacheFilePath)) return;
+                if (string.IsNullOrEmpty(_cacheFilePath))
+                {
+                    System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Cache: Cannot save cache - cache file path is null/empty");
+                    return;
+                }
 
                 var cacheData = new PersistentCacheData
                 {
@@ -329,10 +384,18 @@ namespace VSIXExtention
                 if (cacheData.HandlerCache.Count > 0 || cacheData.RecentlyUsedRequestTypes.Count > 0 || !System.IO.File.Exists(_cacheFilePath))
                 {
                     var json = JsonConvert.SerializeObject(cacheData);
-                    
+
                     await _cacheFileSemaphore.WaitAsync();
+
                     try
                     {
+                        // Ensure the directory exists
+                        var directory = System.IO.Path.GetDirectoryName(_cacheFilePath);
+                        if (!string.IsNullOrEmpty(directory) && !System.IO.Directory.Exists(directory))
+                        {
+                            System.IO.Directory.CreateDirectory(directory);
+                        }
+
                         System.IO.File.WriteAllText(_cacheFilePath, json);
                     }
                     finally
@@ -340,19 +403,19 @@ namespace VSIXExtention
                         _cacheFileSemaphore.Release();
                     }
 
-                    System.Diagnostics.Debug.WriteLine($"MediatR Cache: Saved cache with {cacheData.HandlerCache.Count} handler types and {cacheData.RecentlyUsedRequestTypes.Count} recent types to {_cacheFilePath}");
-                    System.Diagnostics.Debug.WriteLine($"MediatR Cache: In-memory cache has {_handlerCache.Count} types: [{string.Join(", ", _handlerCache.Keys)}]");
-                    System.Diagnostics.Debug.WriteLine($"MediatR Cache: Recent types: [{string.Join(", ", recentRequestTypes)}]");
-                    System.Diagnostics.Debug.WriteLine($"MediatR Cache: Saved types: [{string.Join(", ", cacheData.HandlerCache.Keys)}]");
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Saved cache with {cacheData.HandlerCache.Count} handler types and {cacheData.RecentlyUsedRequestTypes.Count} recent types to {_cacheFilePath}");
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: In-memory cache has {_handlerCache.Count} types: [{string.Join(", ", _handlerCache.Keys)}]");
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Recent types: [{string.Join(", ", recentRequestTypes)}]");
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Saved types: [{string.Join(", ", cacheData.HandlerCache.Keys)}]");
                 }
                 else
                 {
-                    System.Diagnostics.Debug.WriteLine("MediatR Cache: Skipped saving - no meaningful data and file exists");
+                    System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Cache: Skipped saving - no meaningful data and file exists");
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Error saving cache to file: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Error saving cache to file: {ex.Message}");
             }
         }
 
@@ -422,8 +485,8 @@ namespace VSIXExtention
         private void StartPeriodicSaveTimer()
         {
             _periodicSaveTimer?.Dispose();
-            _periodicSaveTimer = new System.Threading.Timer(PeriodicSaveCallback, null, _periodicSaveInterval, _periodicSaveInterval);
-            System.Diagnostics.Debug.WriteLine("MediatR Cache: Started periodic cache save timer");
+            _periodicSaveTimer = new Timer(PeriodicSaveCallback, null, _periodicSaveInterval, _periodicSaveInterval);
+            System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Cache: Started periodic cache save timer");
         }
 
         private void PeriodicSaveCallback(object state)
@@ -433,14 +496,14 @@ namespace VSIXExtention
                 var hasChanges = false;
                 var now = DateTime.Now;
                 var validationCutoff = now.AddDays(-7);
-                
+
                 // First, validate old handlers that haven't been checked recently
                 foreach (var kvp in _handlerCache.ToList())
                 {
                     var requestTypeName = kvp.Key;
                     var cachedHandlers = kvp.Value.ToList();
                     var handlersToRemove = new List<CachedHandlerInfo>();
-                    
+
                     foreach (var cachedHandler in cachedHandlers)
                     {
                         // If handler hasn't been validated in 7 days, check if it still exists
@@ -451,18 +514,18 @@ namespace VSIXExtention
                                 // Handler still exists, update validation time
                                 cachedHandler.LastValidated = now;
                                 hasChanges = true;
-                                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Validated handler {cachedHandler.Handler.HandlerTypeName} for {requestTypeName}");
+                                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Validated handler {cachedHandler.Handler.HandlerTypeName} for {requestTypeName}");
                             }
                             else
                             {
                                 // Handler no longer exists, mark for removal
                                 handlersToRemove.Add(cachedHandler);
                                 hasChanges = true;
-                                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Handler {cachedHandler.Handler.HandlerTypeName} for {requestTypeName} no longer exists, removing from cache");
+                                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Handler {cachedHandler.Handler.HandlerTypeName} for {requestTypeName} no longer exists, removing from cache");
                             }
                         }
                     }
-                    
+
                     // Remove stale handlers
                     if (handlersToRemove.Any())
                     {
@@ -478,23 +541,23 @@ namespace VSIXExtention
                         }
                     }
                 }
-                
+
                 // Save cache if we made changes or if it was already dirty
                 if (hasChanges)
                 {
                     _cacheIsDirty = true;
                 }
-                
+
                 if (_cacheIsDirty && _cacheLoaded)
                 {
                     _ = Task.Run(SaveCacheToFileAsync);
                     _cacheIsDirty = false;
-                    System.Diagnostics.Debug.WriteLine("MediatR Cache: Periodic cache save and validation completed");
+                    System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Cache: Periodic cache save and validation completed");
                 }
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatR Cache: Error in periodic save and validation: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Error in periodic save and validation: {ex.Message}");
             }
         }
 
@@ -508,7 +571,7 @@ namespace VSIXExtention
                 {
                     return false;
                 }
-                
+
                 // Additional validation could be added here if needed
                 // For now, file existence is sufficient for periodic validation
                 return true;
@@ -529,23 +592,27 @@ namespace VSIXExtention
                     _periodicSaveTimer?.Dispose();
                     _periodicSaveTimer = null;
 
-                    // Save cache synchronously before disposing
-                    if (_cacheLoaded)
+                    // Save cache synchronously before disposing, but only if it wasn't manually cleared
+                    if (_cacheLoaded && !_manuallyCleared)
                     {
                         try
                         {
                             SaveCacheToFileAsync().Wait(TimeSpan.FromSeconds(5));
-                            System.Diagnostics.Debug.WriteLine("MediatR Cache: Cache saved during disposal");
+                            System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Cache: Cache saved during disposal");
                         }
                         catch (Exception ex)
                         {
-                            System.Diagnostics.Debug.WriteLine($"MediatR Cache: Error saving cache during disposal: {ex.Message}");
+                            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Error saving cache during disposal: {ex.Message}");
                         }
+                    }
+                    else if (_manuallyCleared)
+                    {
+                        System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Cache: Skipping disposal save - cache was manually cleared");
                     }
                 }
                 catch (Exception ex)
                 {
-                    System.Diagnostics.Debug.WriteLine($"MediatR Cache: Error during disposal: {ex.Message}");
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache: Error during disposal: {ex.Message}");
                 }
                 finally
                 {
@@ -557,7 +624,7 @@ namespace VSIXExtention
         }
     }
 
-    [System.Serializable]
+    [Serializable]
     public class PersistentCacheData
     {
         public string SolutionPath { get; set; }
@@ -567,7 +634,7 @@ namespace VSIXExtention
         public string CacheVersion { get; set; } = "1.0";
     }
 
-    [System.Serializable]
+    [Serializable]
     public class SerializableHandlerInfo
     {
         public string HandlerTypeName { get; set; }
@@ -578,4 +645,4 @@ namespace VSIXExtention
         public int ColumnNumber { get; set; }
         public bool IsNotificationHandler { get; set; }
     }
-} 
+}
