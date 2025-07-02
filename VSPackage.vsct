@@ -26,12 +26,6 @@
           <ButtonText>Go to MediatR Implementation</ButtonText>
         </Strings>
       </Button>
-      <Button guid="guidVSIXExtentionPackageCmdSet" id="GoToMediatRImplementationTestCommandId" priority="0x0100" type="Button">
-        <Parent guid="guidVSIXExtentionPackageCmdSet" id="MyToolsMenuGroup" />
-        <Strings>
-          <ButtonText>MediatR Extension Test</ButtonText>
-        </Strings>
-      </Button>
       <Button guid="guidVSIXExtentionPackageCmdSet" id="GoToMediatRImplementationContextCommandId" priority="0x0200" type="Button">
         <Parent guid="guidVSIXExtentionPackageCmdSet" id="MyContextMenuGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>

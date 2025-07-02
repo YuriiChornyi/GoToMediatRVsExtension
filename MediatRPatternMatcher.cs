@@ -1,6 +1,8 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -33,6 +35,29 @@ namespace VSIXExtention
         private const string NotificationInterface = "INotification";
         private const string RequestHandlerInterface = "IRequestHandler";
         private const string NotificationHandlerInterface = "INotificationHandler";
+        
+        // File extensions to consider for handler searches
+        private static readonly string[] CSharpFileExtensions = { ".cs" };
+        
+        // Simple session-only memory cache - only stores results when user navigates
+        private static readonly ConcurrentDictionary<string, List<MediatRHandlerInfo>> _sessionCache = new ConcurrentDictionary<string, List<MediatRHandlerInfo>>();
+
+        /// <summary>
+        /// Clears the session cache
+        /// </summary>
+        public static void ClearCache()
+        {
+            _sessionCache.Clear();
+            System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Session cache cleared");
+        }
+
+        /// <summary>
+        /// Gets a simple cache key for the request type
+        /// </summary>
+        private static string GetCacheKey(string requestTypeName, bool isNotification)
+        {
+            return $"{requestTypeName}::{(isNotification ? "notification" : "request")}";
+        }
 
         public static bool IsMediatRRequest(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
         {
@@ -190,32 +215,70 @@ namespace VSIXExtention
 
         public static async Task<List<MediatRHandlerInfo>> FindHandlersInSolution(Solution solution, string requestTypeName)
         {
+            // Check cache first
+            var cacheKey = GetCacheKey(requestTypeName, false);
+            if (_sessionCache.TryGetValue(cacheKey, out var cachedHandlers))
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Cache hit for request handlers: {requestTypeName}");
+                return cachedHandlers;
+            }
+
             var handlers = new List<MediatRHandlerInfo>();
 
-            foreach (var project in solution.Projects)
-            {
-                var compilation = await project.GetCompilationAsync();
-                if (compilation == null) continue;
+            // Use parallel processing for better performance
+            var projectTasks = solution.Projects
+                .Where(p => p.SupportsCompilation && p.HasDocuments) // Filter early
+                .Select(async project =>
+                {
+                    var compilation = await project.GetCompilationAsync();
+                    return compilation != null ? await FindHandlersInProject(compilation, requestTypeName) : new List<MediatRHandlerInfo>();
+                });
 
-                var projectHandlers = await FindHandlersInProject(compilation, requestTypeName);
+            var projectResults = await Task.WhenAll(projectTasks);
+            
+            foreach (var projectHandlers in projectResults)
+            {
                 handlers.AddRange(projectHandlers);
             }
+
+            // Cache the results
+            _sessionCache.TryAdd(cacheKey, handlers);
+            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Cached {handlers.Count} request handler(s) for: {requestTypeName}");
 
             return handlers;
         }
 
         public static async Task<List<MediatRHandlerInfo>> FindNotificationHandlersInSolution(Solution solution, string notificationTypeName)
         {
+            // Check cache first
+            var cacheKey = GetCacheKey(notificationTypeName, true);
+            if (_sessionCache.TryGetValue(cacheKey, out var cachedHandlers))
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Cache hit for notification handlers: {notificationTypeName}");
+                return cachedHandlers;
+            }
+
             var handlers = new List<MediatRHandlerInfo>();
 
-            foreach (var project in solution.Projects)
-            {
-                var compilation = await project.GetCompilationAsync();
-                if (compilation == null) continue;
+            // Use parallel processing for better performance
+            var projectTasks = solution.Projects
+                .Where(p => p.SupportsCompilation && p.HasDocuments) // Filter early
+                .Select(async project =>
+                {
+                    var compilation = await project.GetCompilationAsync();
+                    return compilation != null ? await FindNotificationHandlersInProject(compilation, notificationTypeName) : new List<MediatRHandlerInfo>();
+                });
 
-                var projectHandlers = await FindNotificationHandlersInProject(compilation, notificationTypeName);
+            var projectResults = await Task.WhenAll(projectTasks);
+            
+            foreach (var projectHandlers in projectResults)
+            {
                 handlers.AddRange(projectHandlers);
             }
+
+            // Cache the results
+            _sessionCache.TryAdd(cacheKey, handlers);
+            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Cached {handlers.Count} notification handler(s) for: {notificationTypeName}");
 
             return handlers;
         }
@@ -224,16 +287,20 @@ namespace VSIXExtention
         {
             var handlers = new List<MediatRHandlerInfo>();
 
-            foreach (var syntaxTree in compilation.SyntaxTrees)
+            // Filter syntax trees early - only process C# files
+            var relevantTrees = compilation.SyntaxTrees
+                .Where(tree => tree.FilePath != null && CSharpFileExtensions.Any(ext => tree.FilePath.EndsWith(ext, StringComparison.OrdinalIgnoreCase)));
+
+            foreach (var syntaxTree in relevantTrees)
             {
                 var semanticModel = compilation.GetSemanticModel(syntaxTree);
                 var root = await syntaxTree.GetRootAsync();
 
-                var classDeclarations = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
+                var typeDeclarations = root.DescendantNodes().OfType<TypeDeclarationSyntax>();
 
-                foreach (var classDecl in classDeclarations)
+                foreach (var typeDecl in typeDeclarations)
                 {
-                    var typeSymbol = semanticModel.GetDeclaredSymbol(classDecl) as INamedTypeSymbol;
+                    var typeSymbol = semanticModel.GetDeclaredSymbol(typeDecl) as INamedTypeSymbol;
                     if (typeSymbol == null) continue;
 
                     var handlerInfo = GetHandlerInfo(typeSymbol, semanticModel);
@@ -251,16 +318,20 @@ namespace VSIXExtention
         {
             var handlers = new List<MediatRHandlerInfo>();
 
-            foreach (var syntaxTree in compilation.SyntaxTrees)
+            // Filter syntax trees early - only process C# files
+            var relevantTrees = compilation.SyntaxTrees
+                .Where(tree => tree.FilePath != null && CSharpFileExtensions.Any(ext => tree.FilePath.EndsWith(ext, StringComparison.OrdinalIgnoreCase)));
+
+            foreach (var syntaxTree in relevantTrees)
             {
                 var semanticModel = compilation.GetSemanticModel(syntaxTree);
                 var root = await syntaxTree.GetRootAsync();
 
-                var classDeclarations = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
+                var typeDeclarations = root.DescendantNodes().OfType<TypeDeclarationSyntax>();
 
-                foreach (var classDecl in classDeclarations)
+                foreach (var typeDecl in typeDeclarations)
                 {
-                    var typeSymbol = semanticModel.GetDeclaredSymbol(classDecl) as INamedTypeSymbol;
+                    var typeSymbol = semanticModel.GetDeclaredSymbol(typeDecl) as INamedTypeSymbol;
                     if (typeSymbol == null) continue;
 
                     var handlerInfo = GetHandlerInfo(typeSymbol, semanticModel);

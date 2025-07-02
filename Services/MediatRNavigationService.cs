@@ -4,20 +4,19 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.VisualStudio.Shell;
-using Microsoft.VisualStudio.Threading;
-using VSIXExtention.Interfaces;
+using VSIXExtention.Models;
 
 namespace VSIXExtention.Services
 {
-    public class MediatRNavigationService : IMediatRNavigationService
+    public class MediatRNavigationService
     {
         private readonly IServiceProvider _serviceProvider;
-        private readonly INavigationUIService _uiService;
+        private readonly NavigationUiService _uiService;
 
-        public MediatRNavigationService(IServiceProvider serviceProvider, INavigationUIService uiService)
+        public MediatRNavigationService(IServiceProvider serviceProvider, NavigationUiService uiService)
         {
-            _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
-            _uiService = uiService ?? throw new ArgumentNullException(nameof(uiService));
+            _uiService = uiService;
+            _serviceProvider = serviceProvider;
         }
 
         public async Task<bool> NavigateToHandlersAsync(List<MediatRPatternMatcher.MediatRHandlerInfo> handlers, bool isNotification)

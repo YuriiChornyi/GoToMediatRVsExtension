@@ -1,46 +1,33 @@
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.CodeAnalysis.Host;
+using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Text.Editor;
-using VSIXExtention.Interfaces;
-using VSIXExtention.DI;
 
 namespace VSIXExtention.Services
 {
-    public class MediatRCommandHandler : IMediatRCommandHandler
+    public class MediatRCommandHandler 
     {
-        private readonly IMediatRContextService _contextService;
-        private readonly IMediatRHandlerFinder _handlerFinder;
-        private readonly IMediatRNavigationService _navigationService;
-        private readonly INavigationUIService _uiService;
+        private readonly MediatRContextService _contextService;
+        private readonly NavigationUiService _uiService;
+        private readonly WorkspaceService _workspaceService;
+        private readonly MediatRHandlerFinder _handlerFinder;
+        private readonly MediatRNavigationService _navigationService;
 
-        public MediatRCommandHandler(
-            IMediatRContextService contextService,
-            IMediatRHandlerFinder handlerFinder,
-            IMediatRNavigationService navigationService,
-            INavigationUIService uiService)
+        public MediatRCommandHandler(WorkspaceService workspaceService)
         {
-            _contextService = contextService ?? throw new ArgumentNullException(nameof(contextService));
-            _handlerFinder = handlerFinder ?? throw new ArgumentNullException(nameof(handlerFinder));
-            _navigationService = navigationService ?? throw new ArgumentNullException(nameof(navigationService));
-            _uiService = uiService ?? throw new ArgumentNullException(nameof(uiService));
+            _workspaceService = workspaceService;
+            _contextService = new MediatRContextService(workspaceService);
+            _uiService = new NavigationUiService();
+            _handlerFinder = new MediatRHandlerFinder(workspaceService);
+            _navigationService = new MediatRNavigationService(ServiceProvider.GlobalProvider, _uiService);
         }
 
         public async Task<bool> ExecuteGoToImplementationAsync(ITextView textView, int position)
         {
             try
             {
-                // Get workspace service from ServiceLocator (solution-scoped)
-                var workspaceService = ServiceLocator.TryGetService<IWorkspaceService>();
-                if (workspaceService == null)
-                {
-                    await _uiService.ShowErrorMessageAsync(
-                        "No solution is currently open or workspace service is not available.\n\n" +
-                        "Please open a solution first.",
-                        "MediatR Extension");
-                    return false;
-                }
-
                 // Step 1: Get the MediatR type symbol
                 var typeSymbol = await _contextService.GetMediatRTypeSymbolAsync(textView, position);
                 if (typeSymbol == null)
@@ -55,7 +42,7 @@ namespace VSIXExtention.Services
                 }
 
                 // Step 2: Get semantic model for the document
-                var document = workspaceService.GetDocumentFromTextView(textView);
+                var document = _workspaceService.GetDocumentFromTextView(textView);
                 var semanticModel = document != null ? await document.GetSemanticModelAsync() : null;
 
                 // Step 3: Check if this class implements both IRequest and INotification

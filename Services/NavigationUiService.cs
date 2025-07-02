@@ -2,11 +2,11 @@ using Community.VisualStudio.Toolkit;
 using Microsoft.VisualStudio.Shell;
 using System;
 using System.Threading.Tasks;
-using VSIXExtention.Interfaces;
+using VSIXExtention.Models;
 
 namespace VSIXExtention.Services
 {
-    public class NavigationUI : INavigationUIService
+    public class NavigationUiService
     {
         public string ShowHandlerSelectionDialog(HandlerDisplayInfo[] handlers, bool isNotification)
         {
