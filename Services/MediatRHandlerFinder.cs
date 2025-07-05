@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
+using VSIXExtention.Models;
 
 namespace VSIXExtention.Services
 {
@@ -15,14 +16,14 @@ namespace VSIXExtention.Services
             _workspaceService = workspaceService;
         }
 
-        public async Task<List<MediatRPatternMatcher.MediatRHandlerInfo>> FindAllHandlersAsync(INamedTypeSymbol requestTypeSymbol, SemanticModel semanticModel)
+        public async Task<List<MediatRHandlerInfo>> FindAllHandlersAsync(INamedTypeSymbol requestTypeSymbol, SemanticModel semanticModel)
         {
             try
             {
                 var workspace = _workspaceService.GetWorkspace();
                 
                 if (workspace?.CurrentSolution == null)
-                    return new List<MediatRPatternMatcher.MediatRHandlerInfo>();
+                    return new List<MediatRHandlerInfo>();
 
                 // Use the new method that finds all handlers (both request and notification)
                 var allHandlers = await MediatRPatternMatcher.FindAllHandlersForTypeSymbol(workspace.CurrentSolution, requestTypeSymbol, semanticModel);
@@ -51,7 +52,7 @@ namespace VSIXExtention.Services
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRHandlerFinder: Error finding all handlers: {ex.Message}");
-                return new List<MediatRPatternMatcher.MediatRHandlerInfo>();
+                return new List<MediatRHandlerInfo>();
             }
         }
     }

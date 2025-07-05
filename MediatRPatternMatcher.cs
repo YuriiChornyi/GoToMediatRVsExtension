@@ -6,39 +6,21 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using VSIXExtention.Models;
 
 namespace VSIXExtention
 {
     public class MediatRPatternMatcher
     {
-        public class MediatRRequestInfo
-        {
-            public string RequestTypeName { get; set; }
-            public string ResponseTypeName { get; set; }
-            public INamedTypeSymbol RequestSymbol { get; set; }
-            public bool HasResponse { get; set; }
-            public bool IsNotification { get; set; }
-        }
-
-        public class MediatRHandlerInfo
-        {
-            public string HandlerTypeName { get; set; }
-            public string RequestTypeName { get; set; }
-            public string ResponseTypeName { get; set; }
-            public INamedTypeSymbol HandlerSymbol { get; set; }
-            public Location Location { get; set; }
-            public bool IsNotificationHandler { get; set; }
-        }
-
         private const string MediatRNamespace = "MediatR";
         private const string RequestInterface = "IRequest";
         private const string NotificationInterface = "INotification";
         private const string RequestHandlerInterface = "IRequestHandler";
         private const string NotificationHandlerInterface = "INotificationHandler";
-        
+
         // File extensions to consider for handler searches
         private static readonly string[] CSharpFileExtensions = { ".cs" };
-        
+
         // Simple session-only memory cache - only stores results when user navigates
         private static readonly ConcurrentDictionary<string, List<MediatRHandlerInfo>> _sessionCache = new ConcurrentDictionary<string, List<MediatRHandlerInfo>>();
 
@@ -52,18 +34,37 @@ namespace VSIXExtention
         }
 
         /// <summary>
-        /// Gets a simple cache key for the request type
+        /// Clears cache for a specific request type symbol (both request and notification variants)
         /// </summary>
-        private static string GetCacheKey(string requestTypeName, bool isNotification)
+        public static void ClearCacheForRequestType(INamedTypeSymbol requestTypeSymbol)
         {
-            return $"{requestTypeName}::{(isNotification ? "notification" : "request")}";
+            var requestKey = GetCacheKey(requestTypeSymbol, false);
+            var notificationKey = GetCacheKey(requestTypeSymbol, true);
+            
+            bool requestRemoved = _sessionCache.TryRemove(requestKey, out _);
+            bool notificationRemoved = _sessionCache.TryRemove(notificationKey, out _);
+            
+            if (requestRemoved || notificationRemoved)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Cache invalidated for request type: {requestTypeSymbol.Name}");
+            }
+        }
+
+        /// <summary>
+        /// Gets a more specific cache key using the full type symbol information
+        /// </summary>
+        private static string GetCacheKey(INamedTypeSymbol requestTypeSymbol, bool isNotification)
+        {
+            var fullTypeName = requestTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+            var assemblyName = requestTypeSymbol.ContainingAssembly?.Name ?? "Unknown";
+            return $"{fullTypeName}::{assemblyName}::{(isNotification ? "notification" : "request")}";
         }
 
         public static bool IsMediatRRequest(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
         {
             if (typeSymbol == null) return false;
 
-            return typeSymbol.AllInterfaces.Any(i => 
+            return typeSymbol.AllInterfaces.Any(i =>
                 i.ContainingNamespace?.ToDisplayString() == MediatRNamespace &&
                 (i.Name == RequestInterface || i.Name == NotificationInterface));
         }
@@ -83,7 +84,7 @@ namespace VSIXExtention
         public static List<MediatRRequestInfo> GetAllRequestInfo(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
         {
             var requestInfoList = new List<MediatRRequestInfo>();
-            
+
             if (!IsMediatRRequest(typeSymbol, semanticModel))
                 return requestInfoList;
 
@@ -140,7 +141,7 @@ namespace VSIXExtention
         {
             if (typeSymbol == null) return false;
 
-            return typeSymbol.AllInterfaces.Any(i => 
+            return typeSymbol.AllInterfaces.Any(i =>
                 i.ContainingNamespace?.ToDisplayString() == MediatRNamespace &&
                 (i.Name == RequestHandlerInterface || i.Name == NotificationHandlerInterface));
         }
@@ -191,7 +192,7 @@ namespace VSIXExtention
         /// </summary>
         public static async Task<List<MediatRHandlerInfo>> FindAllHandlersForTypeSymbol(Solution solution, INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
         {
-            var allHandlers = new List<MediatRHandlerInfo>();
+            var uniqueHandlers = new HashSet<MediatRHandlerInfo>();
             var allRequestInfo = GetAllRequestInfo(typeSymbol, semanticModel);
 
             foreach (var requestInfo in allRequestInfo)
@@ -200,30 +201,48 @@ namespace VSIXExtention
                 
                 if (requestInfo.IsNotification)
                 {
-                    handlers = await FindNotificationHandlersInSolution(solution, requestInfo.RequestTypeName);
+                    handlers = await FindNotificationHandlersInSolutionBySymbol(solution, typeSymbol, true);
                 }
                 else
                 {
-                    handlers = await FindHandlersInSolution(solution, requestInfo.RequestTypeName);
+                    handlers = await FindHandlersInSolutionBySymbol(solution, typeSymbol, false);
                 }
                 
-                allHandlers.AddRange(handlers);
+                // Add handlers to HashSet to automatically deduplicate
+                foreach (var handler in handlers)
+                {
+                    uniqueHandlers.Add(handler);
+                }
             }
 
-            return allHandlers;
+            var result = uniqueHandlers.ToList();
+            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Found {result.Count} unique handlers after deduplication for {typeSymbol.Name}");
+            return result;
         }
 
-        public static async Task<List<MediatRHandlerInfo>> FindHandlersInSolution(Solution solution, string requestTypeName)
+        /// <summary>
+        /// Finds handlers in solution using type symbol for more specific caching
+        /// </summary>
+        public static async Task<List<MediatRHandlerInfo>> FindHandlersInSolutionBySymbol(Solution solution, INamedTypeSymbol requestTypeSymbol, bool isNotification)
         {
-            // Check cache first
-            var cacheKey = GetCacheKey(requestTypeName, false);
+            // Check cache first using the more specific key
+            var cacheKey = GetCacheKey(requestTypeSymbol, isNotification);
             if (_sessionCache.TryGetValue(cacheKey, out var cachedHandlers))
             {
-                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Cache hit for request handlers: {requestTypeName}");
-                return cachedHandlers;
+                // Don't return empty cached results - they indicate stale cache
+                if (cachedHandlers.Count > 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Cache hit for {(isNotification ? "notification" : "request")} handlers: {requestTypeSymbol.Name}");
+                    return cachedHandlers;
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Ignoring empty cache result for: {requestTypeSymbol.Name}");
+                }
             }
 
             var handlers = new List<MediatRHandlerInfo>();
+            var requestTypeName = requestTypeSymbol.Name;
 
             // Use parallel processing for better performance
             var projectTasks = solution.Projects
@@ -231,7 +250,11 @@ namespace VSIXExtention
                 .Select(async project =>
                 {
                     var compilation = await project.GetCompilationAsync();
-                    return compilation != null ? await FindHandlersInProject(compilation, requestTypeName) : new List<MediatRHandlerInfo>();
+                    return compilation != null ? 
+                        (isNotification ? 
+                            await FindNotificationHandlersInProject(compilation, requestTypeName) : 
+                            await FindHandlersInProject(compilation, requestTypeName)) : 
+                        new List<MediatRHandlerInfo>();
                 });
 
             var projectResults = await Task.WhenAll(projectTasks);
@@ -241,46 +264,32 @@ namespace VSIXExtention
                 handlers.AddRange(projectHandlers);
             }
 
-            // Cache the results
-            _sessionCache.TryAdd(cacheKey, handlers);
-            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Cached {handlers.Count} request handler(s) for: {requestTypeName}");
+            // Only cache non-empty results to avoid cache invalidation bug
+            if (handlers.Count > 0)
+            {
+                _sessionCache.TryAdd(cacheKey, handlers);
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Cached {handlers.Count} {(isNotification ? "notification" : "request")} handler(s) for: {requestTypeSymbol.Name}");
+                
+                // Log handler details for debugging
+                foreach (var handler in handlers)
+                {
+                    System.Diagnostics.Debug.WriteLine($"  - Found {(isNotification ? "notification" : "request")} handler: {handler.HandlerTypeName} at {handler.Location?.SourceTree?.FilePath}");
+                }
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: No handlers found for {requestTypeSymbol.Name} - not caching empty result");
+            }
 
             return handlers;
         }
 
-        public static async Task<List<MediatRHandlerInfo>> FindNotificationHandlersInSolution(Solution solution, string notificationTypeName)
+        /// <summary>
+        /// Convenience method for finding notification handlers by symbol
+        /// </summary>
+        public static async Task<List<MediatRHandlerInfo>> FindNotificationHandlersInSolutionBySymbol(Solution solution, INamedTypeSymbol requestTypeSymbol, bool isNotification)
         {
-            // Check cache first
-            var cacheKey = GetCacheKey(notificationTypeName, true);
-            if (_sessionCache.TryGetValue(cacheKey, out var cachedHandlers))
-            {
-                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Cache hit for notification handlers: {notificationTypeName}");
-                return cachedHandlers;
-            }
-
-            var handlers = new List<MediatRHandlerInfo>();
-
-            // Use parallel processing for better performance
-            var projectTasks = solution.Projects
-                .Where(p => p.SupportsCompilation && p.HasDocuments) // Filter early
-                .Select(async project =>
-                {
-                    var compilation = await project.GetCompilationAsync();
-                    return compilation != null ? await FindNotificationHandlersInProject(compilation, notificationTypeName) : new List<MediatRHandlerInfo>();
-                });
-
-            var projectResults = await Task.WhenAll(projectTasks);
-            
-            foreach (var projectHandlers in projectResults)
-            {
-                handlers.AddRange(projectHandlers);
-            }
-
-            // Cache the results
-            _sessionCache.TryAdd(cacheKey, handlers);
-            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Cached {handlers.Count} notification handler(s) for: {notificationTypeName}");
-
-            return handlers;
+            return await FindHandlersInSolutionBySymbol(solution, requestTypeSymbol, isNotification);
         }
 
         private static async Task<List<MediatRHandlerInfo>> FindHandlersInProject(Compilation compilation, string requestTypeName)
@@ -345,4 +354,4 @@ namespace VSIXExtention
             return handlers;
         }
     }
-} 
+}
