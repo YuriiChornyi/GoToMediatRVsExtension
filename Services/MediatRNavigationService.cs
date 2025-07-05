@@ -4,23 +4,40 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.VisualStudio.Shell;
-using Microsoft.VisualStudio.Threading;
-using VSIXExtention.Interfaces;
+using VSIXExtention.Models;
 
 namespace VSIXExtention.Services
 {
-    public class MediatRNavigationService : IMediatRNavigationService
+    public enum NavigationFailureReason
+    {
+        Success,
+        FileNotFound,
+        InvalidLocation,
+        NavigationError
+    }
+
+    public class NavigationResult
+    {
+        public bool Success { get; set; }
+        public NavigationFailureReason FailureReason { get; set; }
+        public string ErrorMessage { get; set; }
+
+        public static NavigationResult CreateSuccess() => new NavigationResult { Success = true, FailureReason = NavigationFailureReason.Success };
+        public static NavigationResult CreateFailure(NavigationFailureReason reason, string message = null) => new NavigationResult { Success = false, FailureReason = reason, ErrorMessage = message };
+    }
+
+    public class MediatRNavigationService
     {
         private readonly IServiceProvider _serviceProvider;
-        private readonly INavigationUIService _uiService;
+        private readonly NavigationUiService _uiService;
 
-        public MediatRNavigationService(IServiceProvider serviceProvider, INavigationUIService uiService)
+        public MediatRNavigationService(IServiceProvider serviceProvider, NavigationUiService uiService)
         {
-            _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
-            _uiService = uiService ?? throw new ArgumentNullException(nameof(uiService));
+            _uiService = uiService;
+            _serviceProvider = serviceProvider;
         }
 
-        public async Task<bool> NavigateToHandlersAsync(List<MediatRPatternMatcher.MediatRHandlerInfo> handlers, bool isNotification)
+        public async Task<bool> NavigateToHandlersAsync(List<MediatRHandlerInfo> handlers, bool isNotification)
         {
             if (!handlers.Any())
             {
@@ -31,9 +48,16 @@ namespace VSIXExtention.Services
             if (handlers.Count == 1)
             {
                 // Single handler - navigate directly
-                var success = await NavigateToLocationAsync(handlers[0].Location);
-                if (!success)
+                var navigationResult = await NavigateToLocationAsync(handlers[0].Location);
+                if (!navigationResult.Success)
                 {
+                    // If navigation failed due to file not found, clear cache for this request type
+                    if (navigationResult.FailureReason == NavigationFailureReason.FileNotFound)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: File not found for handler, clearing cache for: {handlers[0].RequestTypeName}");
+                        MediatRPatternMatcher.ClearCacheForRequestType(handlers[0].HandlerSymbol);
+                    }
+
                     // Try to recover by showing error message
                     await _uiService.ShowErrorMessageAsync(
                         $"Could not navigate to handler '{handlers[0].HandlerTypeName}'.\n\n" +
@@ -41,7 +65,7 @@ namespace VSIXExtention.Services
                         "Try rebuilding your solution or check if the handler still exists.",
                         "MediatR Extension - Navigation Failed");
                 }
-                return success;
+                return navigationResult.Success;
             }
 
             // Multiple handlers - show selection dialog
@@ -56,12 +80,12 @@ namespace VSIXExtention.Services
             return result ?? false;
         }
 
-        public async Task<bool> NavigateToLocationAsync(Location location)
+        public async Task<NavigationResult> NavigateToLocationAsync(Location location)
         {
             if (location?.SourceTree?.FilePath == null)
             {
                 System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: MediatRNavigationService: Location or FilePath is null");
-                return false;
+                return NavigationResult.CreateFailure(NavigationFailureReason.InvalidLocation, "Location or FilePath is null");
             }
 
             var filePath = location.SourceTree.FilePath;
@@ -73,16 +97,24 @@ namespace VSIXExtention.Services
             if (!System.IO.File.Exists(filePath))
             {
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: File not found: {filePath}");
-                return false;
+                return NavigationResult.CreateFailure(NavigationFailureReason.FileNotFound, $"File not found: {filePath}");
             }
             
-            var result = await OpenDocumentAndNavigate(filePath, lineSpan.StartLinePosition);
-            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: Navigation result: {result}");
-            return result;
+            var success = await OpenDocumentAndNavigate(filePath, lineSpan.StartLinePosition);
+            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: Navigation result: {success}");
+            
+            if (success)
+            {
+                return NavigationResult.CreateSuccess();
+            }
+            else
+            {
+                return NavigationResult.CreateFailure(NavigationFailureReason.NavigationError, $"Failed to navigate to {filePath}");
+            }
         }
 
         private async Task<bool?> NavigateToMultipleHandlersAsync(
-            List<MediatRPatternMatcher.MediatRHandlerInfo> handlers, 
+            List<MediatRHandlerInfo> handlers, 
             bool isNotification)
         {
             try
@@ -134,16 +166,23 @@ namespace VSIXExtention.Services
                 var selectedHandler = handlerDisplayInfo.FirstOrDefault(hdi => hdi.DisplayText == selectedHandlerName)?.Handler;
                 if (selectedHandler != null)
                 {
-                    var success = await NavigateToLocationAsync(selectedHandler.Location);
-                    if (!success)
+                    var navigationResult = await NavigateToLocationAsync(selectedHandler.Location);
+                    if (!navigationResult.Success)
                     {
+                        // If navigation failed due to file not found, clear cache for this request type
+                        if (navigationResult.FailureReason == NavigationFailureReason.FileNotFound)
+                        {
+                            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: File not found for handler, clearing cache for: {selectedHandler.RequestTypeName}");
+                            MediatRPatternMatcher.ClearCacheForRequestType(selectedHandler.HandlerSymbol);
+                        }
+
                         await _uiService.ShowErrorMessageAsync(
                             $"Could not navigate to handler '{selectedHandler.HandlerTypeName}'.\n\n" +
                             "The handler may have been moved, renamed, or deleted. " +
                             "Try rebuilding your solution or check if the handler still exists.",
                             "MediatR Extension - Navigation Failed");
                     }
-                    return success;
+                    return navigationResult.Success;
                 }
 
                 return false;
@@ -155,7 +194,7 @@ namespace VSIXExtention.Services
             }
         }
 
-        private string FormatHandlerDisplayText(MediatRPatternMatcher.MediatRHandlerInfo handler, bool includePrefixes)
+        private string FormatHandlerDisplayText(MediatRHandlerInfo handler, bool includePrefixes)
         {
             try
             {

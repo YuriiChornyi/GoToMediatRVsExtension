@@ -9,8 +9,6 @@ using System.ComponentModel.Design;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
-using VSIXExtention.DI;
-using VSIXExtention.Interfaces;
 using VSIXExtention.Services;
 
 namespace VSIXExtention
@@ -22,7 +20,6 @@ namespace VSIXExtention
     [Guid(VSIXExtentionPackage.PackageGuidString)]
     [ProvideMenuResource("Menus.ctmenu", 1)]
     [ProvideAutoLoad(Microsoft.VisualStudio.Shell.Interop.UIContextGuids80.SolutionExists, PackageAutoLoadFlags.BackgroundLoad)]
-    [ProvideAutoLoad(Microsoft.VisualStudio.Shell.Interop.UIContextGuids80.NoSolution, PackageAutoLoadFlags.BackgroundLoad)]
     public sealed class VSIXExtentionPackage : AsyncPackage
     {
         public const string PackageGuidString = "cf38f10f-fa64-4c4b-9ebc-6d7d897607ea";
@@ -30,7 +27,17 @@ namespace VSIXExtention
         public const int GoToMediatRImplementationCommandId = 0x0100;
         public const int GoToMediatRImplementationContextCommandId = 0x0102;
 
-        private ExtensionServiceContainer _serviceContainer;
+        private readonly MediatRCommandHandler _mediatRCommandHandler;
+        private readonly MediatRContextService _mediatRContextService;
+        private readonly WorkspaceService _workspaceService;
+
+        public VSIXExtentionPackage()
+        {
+            _workspaceService = new WorkspaceService();
+            _workspaceService.InitializeWorkspace();
+            _mediatRCommandHandler = new MediatRCommandHandler(_workspaceService);
+            _mediatRContextService = new MediatRContextService(_workspaceService);
+        }
 
         #region Package Members
 
@@ -40,10 +47,6 @@ namespace VSIXExtention
 
             await this.JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
 
-            // Initialize dependency injection container
-            await InitializeServicesAsync();
-
-            // Register commands
             await RegisterCommandsAsync();
 
             await base.InitializeAsync(cancellationToken, progress);
@@ -51,33 +54,10 @@ namespace VSIXExtention
             System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: Initialization complete");
         }
 
-        private async Task InitializeServicesAsync()
-        {
-            _serviceContainer = new ExtensionServiceContainer();
-
-            // Register all MediatR services with their dependencies
-            _serviceContainer.RegisterMediatRServices(this);
-
-            // Initialize the service locator
-            ServiceLocator.Initialize(_serviceContainer);
-
-            // DO NOT register solution services here - they will be registered when a solution opens
-            // _serviceContainer.RegisterSolutionServices();
-
-            // Create and initialize solution context manager - this will handle solution events
-            var solutionContextManager = new SolutionContextManager();
-            
-            // Register the solution context manager as a singleton so it can be disposed properly
-            _serviceContainer.RegisterInstance<SolutionContextManager>(solutionContextManager);
-
-            await solutionContextManager.InitializeAsync();
-
-            System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: Services initialized");
-        }
-
         private async Task RegisterCommandsAsync()
         {
             var commandService = await GetServiceAsync(typeof(IMenuCommandService)) as OleMenuCommandService;
+
             if (commandService != null)
             {
                 // Register main menu command
@@ -149,8 +129,7 @@ namespace VSIXExtention
                     return;
                 }
 
-                var contextService = _serviceContainer.GetService<IMediatRContextService>();
-                bool isMediatRContext = await contextService.IsInMediatRContextAsync(textView);
+                bool isMediatRContext = await _mediatRContextService.IsInMediatRContextAsync(textView);
 
                 command.Visible = isMediatRContext;
                 command.Enabled = isMediatRContext;
@@ -179,11 +158,7 @@ namespace VSIXExtention
 
                 int position = GetCaretOrSelectionPosition(textView);
 
-                var commandHandler = _serviceContainer.GetService<IMediatRCommandHandler>();
-                bool success = await commandHandler.ExecuteGoToImplementationAsync(textView, position);
-
-                // Error messages are handled within the command handler
-                // This keeps the package class clean and focused
+                await _mediatRCommandHandler.ExecuteGoToImplementationAsync(textView, position);
             }
             catch (Exception ex)
             {
@@ -234,15 +209,7 @@ namespace VSIXExtention
             {
                 try
                 {
-                    // Dispose solution context manager first (which will clean up solution services)
-                    var solutionContextManager = _serviceContainer?.TryGetService<SolutionContextManager>();
-                    solutionContextManager?.Dispose();
-
-                    // Dispose service locator and containers
-                    ServiceLocator.Dispose();
-                    _serviceContainer?.Dispose();
-                    _serviceContainer = null;
-                    
+                    _workspaceService?.Dispose();
                     System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: Package disposed successfully");
                 }
                 catch (Exception ex)

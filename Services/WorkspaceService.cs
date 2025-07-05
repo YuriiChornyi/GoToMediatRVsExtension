@@ -1,31 +1,29 @@
+﻿using System;
+using System.Linq;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Host;
 using Microsoft.VisualStudio.ComponentModelHost;
 using Microsoft.VisualStudio.LanguageServices;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.TextManager.Interop;
-using System;
-using System.Linq;
-using VSIXExtention.Interfaces;
 
 namespace VSIXExtention.Services
 {
     public class WorkspaceService : IWorkspaceService, IDisposable
     {
         private VisualStudioWorkspace _cachedWorkspace;
-        private bool _disposed = false;
-
-        public WorkspaceService()
-        {
-        }
 
         public void InitializeWorkspace()
         {
             var workspace = Package.GetGlobalService(typeof(VisualStudioWorkspace)) as VisualStudioWorkspace;
 
             if (workspace != null)
+            {
                 _cachedWorkspace = workspace;
+                return;
+            }
 
             try
             {
@@ -34,7 +32,6 @@ namespace VSIXExtention.Services
                 if (compModel != null)
                 {
                     var vsWorkspace = compModel.GetService<VisualStudioWorkspace>();
-
                     _cachedWorkspace = vsWorkspace;
                 }
                 else
@@ -48,26 +45,29 @@ namespace VSIXExtention.Services
             }
         }
 
+        public void Dispose()
+        {
+            // Nothing to dispose anymore
+        }
+
         public VisualStudioWorkspace GetWorkspace()
         {
             return _cachedWorkspace;
-
         }
 
         public Document GetDocumentFromTextView(ITextView textView)
         {
-            var workspace = GetWorkspace();
-            if (workspace?.CurrentSolution == null)
+            if (_cachedWorkspace?.CurrentSolution == null)
                 return null;
 
             var filePath = GetFilePathFromTextView(textView);
             if (string.IsNullOrEmpty(filePath))
                 return null;
 
-            var documentIds = workspace.CurrentSolution.GetDocumentIdsWithFilePath(filePath);
+            var documentIds = _cachedWorkspace.CurrentSolution.GetDocumentIdsWithFilePath(filePath);
             var documentId = documentIds.FirstOrDefault();
 
-            return documentId != null ? workspace.CurrentSolution.GetDocument(documentId) : null;
+            return documentId != null ? _cachedWorkspace.CurrentSolution.GetDocument(documentId) : null;
         }
 
         public string GetFilePathFromTextView(ITextView textView)
@@ -108,14 +108,6 @@ namespace VSIXExtention.Services
             catch
             {
                 return null;
-            }
-        }
-
-        public void Dispose()
-        {
-            if (!_disposed)
-            {
-                _disposed = true;
             }
         }
     }

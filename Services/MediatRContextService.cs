@@ -4,15 +4,16 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.VisualStudio.Text.Editor;
-using VSIXExtention.Interfaces;
-using VSIXExtention.DI;
 
 namespace VSIXExtention.Services
 {
-    public class MediatRContext : IMediatRContextService
+    public class MediatRContextService
     {
-        public MediatRContext()
+        private readonly WorkspaceService _workspaceService;
+        
+        public MediatRContextService(WorkspaceService workspaceService)
         {
+            _workspaceService = workspaceService;
         }
 
         public async Task<bool> IsInMediatRContextAsync(ITextView textView)
@@ -22,11 +23,7 @@ namespace VSIXExtention.Services
                 if (!IsValidContext(textView))
                     return false;
 
-                var workspaceService = ServiceLocator.TryGetService<IWorkspaceService>();
-                if (workspaceService == null)
-                    return false;
-
-                var document = workspaceService.GetDocumentFromTextView(textView);
+                var document = _workspaceService.GetDocumentFromTextView(textView);
                 if (document == null)
                     return false;
 
@@ -44,11 +41,7 @@ namespace VSIXExtention.Services
         {
             try
             {
-                var workspaceService = ServiceLocator.TryGetService<IWorkspaceService>();
-                if (workspaceService == null)
-                    return null;
-
-                var document = workspaceService.GetDocumentFromTextView(textView);
+                var document = _workspaceService.GetDocumentFromTextView(textView);
                 if (document == null)
                     return null;
 
@@ -60,11 +53,11 @@ namespace VSIXExtention.Services
                 var root = await syntaxTree.GetRootAsync();
                 var node = root.FindNode(textSpan, getInnermostNodeForTie: true);
 
-                // Quick syntax check - must be in/on a class or identifier
-                var classDeclaration = node.FirstAncestorOrSelf<ClassDeclarationSyntax>();
+                // Quick syntax check - must be in/on a type declaration (class/record) or identifier
+                var typeDeclaration = node.FirstAncestorOrSelf<TypeDeclarationSyntax>();
                 var identifierName = node as IdentifierNameSyntax ?? node.FirstAncestorOrSelf<IdentifierNameSyntax>();
 
-                if (classDeclaration == null && identifierName == null)
+                if (typeDeclaration == null && identifierName == null)
                     return null;
 
                 // Only get semantic model if we passed syntax checks (expensive operation)
@@ -72,10 +65,10 @@ namespace VSIXExtention.Services
                 if (semanticModel == null)
                     return null;
 
-                // Check class declaration first (more common case)
-                if (classDeclaration != null)
+                // Check type declaration first (class, record, etc. - more common case)
+                if (typeDeclaration != null)
                 {
-                    var typeSymbol = semanticModel.GetDeclaredSymbol(classDeclaration) as INamedTypeSymbol;
+                    var typeSymbol = semanticModel.GetDeclaredSymbol(typeDeclaration) as INamedTypeSymbol;
                     if (IsValidMediatRType(typeSymbol, semanticModel))
                         return typeSymbol;
                 }
@@ -109,11 +102,7 @@ namespace VSIXExtention.Services
             if (contentType?.TypeName != "CSharp")
                 return false;
 
-            var workspaceService = ServiceLocator.TryGetService<IWorkspaceService>();
-            if (workspaceService == null)
-                return false;
-
-            var filePath = workspaceService.GetFilePathFromTextView(textView);
+            var filePath = _workspaceService.GetFilePathFromTextView(textView);
 
             // Only process C# files
             if (string.IsNullOrEmpty(filePath) || !filePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
