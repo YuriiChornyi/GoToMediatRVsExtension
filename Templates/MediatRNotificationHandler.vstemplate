@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<VSTemplate Version="3.0.0" xmlns="http://schemas.microsoft.com/developer/vstemplate/2005" Type="Item">
+    <TemplateData>
+        <Name>MediatR Notification Handler</Name>
+        <Description>Creates a new MediatR notification handler class implementing INotificationHandler</Description>
+        <ProjectType>CSharp</ProjectType>
+        <DefaultName>NotificationHandler.cs</DefaultName>
+        <Icon>__TemplateIcon.ico</Icon>
+        <TemplateID>VSIXExtention.MediatRNotificationHandler</TemplateID>
+        <SortOrder>1003</SortOrder>
+        <CreateNewFolder>false</CreateNewFolder>
+    </TemplateData>
+    <TemplateContent>
+        <References />
+        <ProjectItem ReplaceParameters="true">MediatRNotificationHandler.cs</ProjectItem>
+        <CustomParameters>
+            <CustomParameter Name="$notificationname$" Value="YourNotificationClass" />
+        </CustomParameters>
+    </TemplateContent>
+</VSTemplate> 

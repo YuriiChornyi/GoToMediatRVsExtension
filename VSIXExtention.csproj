@@ -131,6 +131,32 @@
       <IncludeInVSIX>true</IncludeInVSIX>
     </Content>
   </ItemGroup>
+  <ItemGroup>
+    <ZipItem Include="Templates\MediatRCommand.cs">
+      <ZipFolder>Templates\MediatRCommand.zip</ZipFolder>
+    </ZipItem>
+    <ZipItem Include="Templates\MediatRCommand.vstemplate">
+      <ZipFolder>Templates\MediatRCommand.zip</ZipFolder>
+    </ZipItem>
+    <ZipItem Include="Templates\MediatRHandler.cs">
+      <ZipFolder>Templates\MediatRHandler.zip</ZipFolder>
+    </ZipItem>
+    <ZipItem Include="Templates\MediatRHandler.vstemplate">
+      <ZipFolder>Templates\MediatRHandler.zip</ZipFolder>
+    </ZipItem>
+    <ZipItem Include="Templates\MediatRNotification.cs">
+      <ZipFolder>Templates\MediatRNotification.zip</ZipFolder>
+    </ZipItem>
+    <ZipItem Include="Templates\MediatRNotification.vstemplate">
+      <ZipFolder>Templates\MediatRNotification.zip</ZipFolder>
+    </ZipItem>
+    <ZipItem Include="Templates\MediatRNotificationHandler.cs">
+      <ZipFolder>Templates\MediatRNotificationHandler.zip</ZipFolder>
+    </ZipItem>
+    <ZipItem Include="Templates\MediatRNotificationHandler.vstemplate">
+      <ZipFolder>Templates\MediatRNotificationHandler.zip</ZipFolder>
+    </ZipItem>
+  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="$(VSToolsPath)\VSSDK\Microsoft.VsSDK.targets" Condition="'$(VSToolsPath)' != ''" />
 </Project>

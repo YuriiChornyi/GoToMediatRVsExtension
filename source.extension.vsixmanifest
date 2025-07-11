@@ -3,11 +3,11 @@
     <Metadata>
         <Identity Id="MediatRNavigationExtension.38878949-742f-44c0-aec9-643fa3fbb5bc" Version="4.0" Language="en-US" Publisher="Yurii Chornyi" />
         <DisplayName>MediatR Navigation Extension</DisplayName>
-        <Description xml:space="preserve">Navigate from MediatR requests, commands, queries, and notifications to their corresponding handlers with "Go to MediatR Implementation" command.</Description>
+        <Description xml:space="preserve">Navigate from MediatR requests, commands, queries, and notifications to their corresponding handlers with "Go to MediatR Implementation" command. Also includes item templates for creating MediatR commands, handlers, and notifications.</Description>
         <License>LICENSE.txt</License>
         <Icon>Resources\icon_90_90.png</Icon>
         <PreviewImage>Resources\icon_90_90.png</PreviewImage>
-        <Tags>MediatR, CQRS, Navigation, Roslyn, CodeAnalysis</Tags>
+        <Tags>MediatR, CQRS, Navigation, Roslyn, CodeAnalysis, Templates</Tags>
     </Metadata>
     <Installation>
         <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0, 18.0)">
@@ -29,5 +29,9 @@
     </Prerequisites>
     <Assets>
         <Asset Type="Microsoft.VisualStudio.VsPackage" d:Source="Project" d:ProjectName="%CurrentProject%" Path="|%CurrentProject%;PkgdefProjectOutputGroup|" />
+        <Asset Type="Microsoft.VisualStudio.ItemTemplate" d:Source="File" Path="Templates\MediatRCommand.zip" />
+        <Asset Type="Microsoft.VisualStudio.ItemTemplate" d:Source="File" Path="Templates\MediatRHandler.zip" />
+        <Asset Type="Microsoft.VisualStudio.ItemTemplate" d:Source="File" Path="Templates\MediatRNotification.zip" />
+        <Asset Type="Microsoft.VisualStudio.ItemTemplate" d:Source="File" Path="Templates\MediatRNotificationHandler.zip" />
     </Assets>
 </PackageManifest>
