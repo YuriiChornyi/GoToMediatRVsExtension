@@ -4,8 +4,8 @@
         <Name>MediatR Notification</Name>
         <Description>Creates a new MediatR notification class implementing INotification</Description>
         <ProjectType>CSharp</ProjectType>
-        <DefaultName>Notification.cs</DefaultName>
-        <Icon>__TemplateIcon.ico</Icon>
+                <DefaultName>Notification.cs</DefaultName>
+        <Icon>MediatRTemplate.ico</Icon>
         <TemplateID>VSIXExtention.MediatRNotification</TemplateID>
         <SortOrder>1002</SortOrder>
         <CreateNewFolder>false</CreateNewFolder>

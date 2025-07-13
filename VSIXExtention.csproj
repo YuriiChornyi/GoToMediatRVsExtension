@@ -71,6 +71,10 @@
     <Compile Include="MediatRPatternMatcher.cs" />
     <Compile Include="Services\WorkspaceService.cs" />
     <Compile Include="VSIXExtentionPackage.cs" />
+    <None Include="Templates\MediatRCommand.cs" />
+    <None Include="Templates\MediatRHandler.cs" />
+    <None Include="Templates\MediatRNotification.cs" />
+    <None Include="Templates\MediatRNotificationHandler.cs" />
   </ItemGroup>
   <ItemGroup>
     <Page Include="HandlerSelectionDialog.xaml">
@@ -84,6 +88,7 @@
     <None Include="source.extension.vsixmanifest">
       <SubType>Designer</SubType>
     </None>
+    <None Include="Templates\README.md" />
     <VSCTCompile Include="VSPackage.vsct">
       <ResourceName>Menus.ctmenu</ResourceName>
     </VSCTCompile>
@@ -133,32 +138,36 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       <IncludeInVSIX>true</IncludeInVSIX>
     </Content>
+    <Content Include="$(OutputPath)ItemTemplates\CSharp\1033\MediatRCommand.zip">
+      <Link>ItemTemplates\CSharp\1033\MediatRCommand.zip</Link>
+      <IncludeInVSIX>true</IncludeInVSIX>
+    </Content>
+    <Content Include="$(OutputPath)ItemTemplates\CSharp\1033\MediatRHandler.zip">
+      <Link>ItemTemplates\CSharp\1033\MediatRHandler.zip</Link>
+      <IncludeInVSIX>true</IncludeInVSIX>
+    </Content>
+    <Content Include="$(OutputPath)ItemTemplates\CSharp\1033\MediatRNotification.zip">
+      <Link>ItemTemplates\CSharp\1033\MediatRNotification.zip</Link>
+      <IncludeInVSIX>true</IncludeInVSIX>
+    </Content>
+    <Content Include="$(OutputPath)ItemTemplates\CSharp\1033\MediatRNotificationHandler.zip">
+      <Link>ItemTemplates\CSharp\1033\MediatRNotificationHandler.zip</Link>
+      <IncludeInVSIX>true</IncludeInVSIX>
+    </Content>
+    <Content Include="Templates\MediatRTemplate.ico" />
   </ItemGroup>
   <ItemGroup>
-    <ZipItem Include="Templates\MediatRCommand.cs">
-      <ZipFolder>Templates\MediatRCommand.zip</ZipFolder>
-    </ZipItem>
-    <ZipItem Include="Templates\MediatRCommand.vstemplate">
-      <ZipFolder>Templates\MediatRCommand.zip</ZipFolder>
-    </ZipItem>
-    <ZipItem Include="Templates\MediatRHandler.cs">
-      <ZipFolder>Templates\MediatRHandler.zip</ZipFolder>
-    </ZipItem>
-    <ZipItem Include="Templates\MediatRHandler.vstemplate">
-      <ZipFolder>Templates\MediatRHandler.zip</ZipFolder>
-    </ZipItem>
-    <ZipItem Include="Templates\MediatRNotification.cs">
-      <ZipFolder>Templates\MediatRNotification.zip</ZipFolder>
-    </ZipItem>
-    <ZipItem Include="Templates\MediatRNotification.vstemplate">
-      <ZipFolder>Templates\MediatRNotification.zip</ZipFolder>
-    </ZipItem>
-    <ZipItem Include="Templates\MediatRNotificationHandler.cs">
-      <ZipFolder>Templates\MediatRNotificationHandler.zip</ZipFolder>
-    </ZipItem>
-    <ZipItem Include="Templates\MediatRNotificationHandler.vstemplate">
-      <ZipFolder>Templates\MediatRNotificationHandler.zip</ZipFolder>
-    </ZipItem>
+    <VSTemplate Include="Templates\MediatRCommand.vstemplate">
+    </VSTemplate>
+    <VSTemplate Include="Templates\MediatRHandler.vstemplate">
+    </VSTemplate>
+    <VSTemplate Include="Templates\MediatRNotification.vstemplate">
+    </VSTemplate>
+    <VSTemplate Include="Templates\MediatRNotificationHandler.vstemplate">
+    </VSTemplate>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="ItemTemplates\CSharp\1033\" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="$(VSToolsPath)\VSSDK\Microsoft.VsSDK.targets" Condition="'$(VSToolsPath)' != ''" />

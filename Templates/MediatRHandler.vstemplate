@@ -4,8 +4,8 @@
         <Name>MediatR Handler</Name>
         <Description>Creates a new MediatR handler class implementing IRequestHandler</Description>
         <ProjectType>CSharp</ProjectType>
-        <DefaultName>Handler.cs</DefaultName>
-        <Icon>__TemplateIcon.ico</Icon>
+                <DefaultName>Handler.cs</DefaultName>
+        <Icon>MediatRTemplate.ico</Icon>
         <TemplateID>VSIXExtention.MediatRHandler</TemplateID>
         <SortOrder>1001</SortOrder>
         <CreateNewFolder>false</CreateNewFolder>
