@@ -26,6 +26,8 @@ namespace VSIXExtention
         public static readonly Guid CommandSet = new Guid("cf38f10f-fa64-4c4b-9ebc-6d7d897607eb");
         public const int GoToMediatRImplementationCommandId = 0x0100;
         public const int GoToMediatRImplementationContextCommandId = 0x0102;
+        public const int GoToMediatRUsageCommandId = 0x0103;
+        public const int GoToMediatRUsageContextCommandId = 0x0104;
 
         private readonly MediatRCommandHandler _mediatRCommandHandler;
         private readonly MediatRContextService _mediatRContextService;
@@ -107,6 +109,52 @@ namespace VSIXExtention
 
                 commandService.AddCommand(contextMenuItem);
 
+                // Register "Go to Send/Publish" menu command
+                var usageMenuCommandID = new CommandID(CommandSet, GoToMediatRUsageCommandId);
+                var usageMenuItem = new OleMenuCommand((sender, e) =>
+                {
+                    Microsoft.VisualStudio.Threading.JoinableTask _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                    {
+                        await ExecuteGoToUsage(sender, e);
+                    });
+                }, usageMenuCommandID);
+
+                usageMenuItem.BeforeQueryStatus += (sender, e) =>
+                {
+                    var command = sender as OleMenuCommand;
+                    if (command == null) return;
+
+                    ThreadHelper.JoinableTaskFactory.Run(async () =>
+                    {
+                        await UsageMenuItem_BeforeQueryStatus(command);
+                    });
+                };
+
+                commandService.AddCommand(usageMenuItem);
+
+                // Register "Go to Send/Publish" context menu command
+                var usageContextMenuCommandID = new CommandID(CommandSet, GoToMediatRUsageContextCommandId);
+                var usageContextMenuItem = new OleMenuCommand((sender, e) =>
+                {
+                    Microsoft.VisualStudio.Threading.JoinableTask _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                    {
+                        await ExecuteGoToUsage(sender, e);
+                    });
+                }, usageContextMenuCommandID);
+
+                usageContextMenuItem.BeforeQueryStatus += (sender, e) =>
+                {
+                    var command = sender as OleMenuCommand;
+                    if (command == null) return;
+
+                    ThreadHelper.JoinableTaskFactory.Run(async () =>
+                    {
+                        await UsageMenuItem_BeforeQueryStatus(command);
+                    });
+                };
+
+                commandService.AddCommand(usageContextMenuItem);
+
                 System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: Commands registered successfully");
             }
             else
@@ -129,15 +177,16 @@ namespace VSIXExtention
                     return;
                 }
 
-                bool isMediatRContext = await _mediatRContextService.IsInMediatRContextAsync(textView);
+                // "Go to MediatR Implementation" should only show when on Request/Command/Query/Notification
+                bool isInRequestContext = await _mediatRContextService.IsInMediatRRequestContextAsync(textView);
 
-                command.Visible = isMediatRContext;
-                command.Enabled = isMediatRContext;
+                command.Visible = isInRequestContext;
+                command.Enabled = isInRequestContext;
                 command.Supported = true;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Package: Error checking MediatR context: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Package: Error checking MediatR request context: {ex.Message}");
                 command.Visible = false;
                 command.Enabled = false;
             }
@@ -164,6 +213,59 @@ namespace VSIXExtention
             {
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Package: Error in ExecuteGoToImplementation: {ex.Message}");
                 await ShowMessageAsync($"An error occurred: {ex.Message}", "MediatRNavigationExtension: Package Error");
+            }
+        }
+
+        private async Task ExecuteGoToUsage(object sender, EventArgs e)
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            try
+            {
+                var textView = GetActiveTextView();
+                if (textView == null)
+                {
+                    await ShowMessageAsync("No active text view found.", "MediatRNavigationExtension: Package");
+                    return;
+                }
+
+                int position = GetCaretOrSelectionPosition(textView);
+
+                await _mediatRCommandHandler.ExecuteGoToUsageAsync(textView, position);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Package: Error in ExecuteGoToUsage: {ex.Message}");
+                await ShowMessageAsync($"An error occurred: {ex.Message}", "MediatRNavigationExtension: Package Error");
+            }
+        }
+
+        private async Task UsageMenuItem_BeforeQueryStatus(OleMenuCommand command)
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            try
+            {
+                var textView = GetActiveTextView();
+                if (textView == null)
+                {
+                    command.Visible = false;
+                    command.Enabled = false;
+                    return;
+                }
+
+                // "Go to MediatR Send/Publish" should only show when on Handler class or Handle method
+                bool isInHandlerContext = await _mediatRContextService.IsInMediatRHandlerContextAsync(textView);
+
+                command.Visible = isInHandlerContext;
+                command.Enabled = isInHandlerContext;
+                command.Supported = true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Package: Error checking MediatR handler context: {ex.Message}");
+                command.Visible = false;
+                command.Enabled = false;
             }
         }
 

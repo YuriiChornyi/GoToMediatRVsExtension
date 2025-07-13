@@ -59,11 +59,14 @@
     <Compile Include="Models\HandlerDisplayInfo.cs" />
     <Compile Include="Models\MediatRHandlerInfo.cs" />
     <Compile Include="Models\MediatRRequestInfo.cs" />
+    <Compile Include="Models\MediatRUsageInfo.cs" />
+    <Compile Include="Models\UsageDisplayInfo.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Services\MediatRCommandHandler.cs" />
     <Compile Include="Services\MediatRContextService.cs" />
     <Compile Include="Services\MediatRHandlerFinder.cs" />
     <Compile Include="Services\MediatRNavigationService.cs" />
+    <Compile Include="Services\MediatRUsageFinder.cs" />
     <Compile Include="Services\NavigationUiService.cs" />
     <Compile Include="MediatRPatternMatcher.cs" />
     <Compile Include="Services\WorkspaceService.cs" />

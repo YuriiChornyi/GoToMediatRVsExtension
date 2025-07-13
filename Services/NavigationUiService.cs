@@ -78,6 +78,36 @@ namespace VSIXExtention.Services
             }
         }
 
+        public string ShowUsageSelectionDialog(UsageDisplayInfo[] usages, string message)
+        {
+            try
+            {
+                ThreadHelper.ThrowIfNotOnUIThread();
+
+                var usageNames = new string[usages.Length];
+                for (int i = 0; i < usages.Length; i++)
+                {
+                    usageNames[i] = usages[i].DisplayText;
+                }
+
+                var dialog = new HandlerSelectionDialog(message, usageNames);
+
+                // Use ShowModal() for DialogWindow
+                var result = dialog.ShowModal();
+                if (result != true)
+                {
+                    return null; // User cancelled or dialog failed
+                }
+
+                return dialog.SelectedHandler;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: NavigationUI: Error showing usage selection dialog: {ex.Message}");
+                return null;
+            }
+        }
+
         public async Task ShowErrorMessageAsync(string message, string title)
         {
             try

@@ -80,6 +80,41 @@ namespace VSIXExtention.Services
             return result ?? false;
         }
 
+        public async Task<bool> NavigateToUsagesAsync(List<MediatRUsageInfo> usages, string requestTypeName)
+        {
+            if (!usages.Any())
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: No usages to navigate to for {requestTypeName}");
+                return false;
+            }
+
+            if (usages.Count == 1)
+            {
+                // Single usage - navigate directly
+                var navigationResult = await NavigateToLocationAsync(usages[0].Location);
+                if (!navigationResult.Success)
+                {
+                    await _uiService.ShowErrorMessageAsync(
+                        $"Could not navigate to usage of '{requestTypeName}'.\n\n" +
+                        "The file may have been moved, renamed, or deleted. " +
+                        "Try rebuilding your solution or check if the usage still exists.",
+                        "MediatR Extension - Navigation Failed");
+                }
+                return navigationResult.Success;
+            }
+
+            // Multiple usages - show selection dialog
+            var result = await NavigateToMultipleUsagesAsync(usages, requestTypeName);
+            
+            // Handle cancellation vs failure differently
+            if (result == null) // Cancellation
+            {
+                return true; // Don't show error for cancellation
+            }
+            
+            return result ?? false;
+        }
+
         public async Task<NavigationResult> NavigateToLocationAsync(Location location)
         {
             if (location?.SourceTree?.FilePath == null)
@@ -194,6 +229,77 @@ namespace VSIXExtention.Services
             }
         }
 
+        private async Task<bool?> NavigateToMultipleUsagesAsync(List<MediatRUsageInfo> usages, string requestTypeName)
+        {
+            try
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                // Group usages by type (Send vs Publish)
+                var sendUsages = usages.Where(u => !u.IsNotificationUsage).ToList();
+                var publishUsages = usages.Where(u => u.IsNotificationUsage).ToList();
+                bool hasMixedTypes = sendUsages.Any() && publishUsages.Any();
+
+                var usageDisplayInfo = usages.Select(u => new UsageDisplayInfo
+                {
+                    Usage = u,
+                    DisplayText = FormatUsageDisplayText(u, hasMixedTypes)
+                }).ToArray();
+
+                string message;
+                if (hasMixedTypes)
+                {
+                    // Mixed types - provide detailed information
+                    message = $"Multiple usages found for '{requestTypeName}':\n";
+                    
+                    if (sendUsages.Any())
+                    {
+                        message += $"• {sendUsages.Count} Send usage(s)\n";
+                    }
+                    if (publishUsages.Any())
+                    {
+                        message += $"• {publishUsages.Count} Publish usage(s)\n";
+                    }
+                    message += "\nPlease select one:";
+                }
+                else
+                {
+                    // Single type - standard message
+                    string usageType = usages.First().IsNotificationUsage ? "publish" : "send";
+                    message = $"Multiple {usageType} usages found. Please select one:";
+                }
+
+                var selectedUsageName = _uiService.ShowUsageSelectionDialog(usageDisplayInfo, message);
+                
+                if (selectedUsageName == null)
+                {
+                    return null; // User cancelled
+                }
+
+                var selectedUsage = usageDisplayInfo.FirstOrDefault(udi => udi.DisplayText == selectedUsageName)?.Usage;
+                if (selectedUsage != null)
+                {
+                    var navigationResult = await NavigateToLocationAsync(selectedUsage.Location);
+                    if (!navigationResult.Success)
+                    {
+                        await _uiService.ShowErrorMessageAsync(
+                            $"Could not navigate to usage of '{requestTypeName}'.\n\n" +
+                            "The file may have been moved, renamed, or deleted. " +
+                            "Try rebuilding your solution or check if the usage still exists.",
+                            "MediatR Extension - Navigation Failed");
+                    }
+                    return navigationResult.Success;
+                }
+
+                return false;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error in NavigateToMultipleUsagesAsync: {ex.Message}");
+                return false;
+            }
+        }
+
         private string FormatHandlerDisplayText(MediatRHandlerInfo handler, bool includePrefixes)
         {
             try
@@ -228,6 +334,43 @@ namespace VSIXExtention.Services
                     prefix = handler.IsNotificationHandler ? "[Notification] " : "[Request] ";
                 }
                 return $"{prefix}{handler.HandlerTypeName}";
+            }
+        }
+
+        private string FormatUsageDisplayText(MediatRUsageInfo usage, bool includePrefixes)
+        {
+            try
+            {
+                string prefix = "";
+                if (includePrefixes)
+                {
+                    prefix = usage.IsNotificationUsage ? "[Publish] " : "[Send] ";
+                }
+
+                var filePath = usage.FilePath;
+                if (string.IsNullOrEmpty(filePath))
+                {
+                    return $"{prefix}{usage.ContextDescription}";
+                }
+
+                // Extract last 2-3 folders for context
+                var pathParts = filePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+                if (pathParts.Length <= 2)
+                {
+                    return $"{prefix}{usage.ContextDescription} ({string.Join("/", pathParts)}:{usage.LineNumber})";
+                }
+
+                var relevantParts = pathParts.Skip(Math.Max(0, pathParts.Length - 3)).ToArray();
+                return $"{prefix}{usage.ContextDescription} ({string.Join("/", relevantParts)}:{usage.LineNumber})";
+            }
+            catch
+            {
+                string prefix = "";
+                if (includePrefixes)
+                {
+                    prefix = usage.IsNotificationUsage ? "[Publish] " : "[Send] ";
+                }
+                return $"{prefix}{usage.ContextDescription ?? "Unknown usage"}";
             }
         }
 
