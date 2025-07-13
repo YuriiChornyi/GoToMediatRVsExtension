@@ -136,7 +136,105 @@ namespace VSIXExtention.Services
 
         private bool IsValidMediatRType(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
         {
-            return typeSymbol != null && MediatRPatternMatcher.GetRequestInfo(typeSymbol, semanticModel) != null;
+            if (typeSymbol == null)
+                return false;
+
+            // Check if it's a MediatR request (IRequest, INotification)
+            if (MediatRPatternMatcher.GetRequestInfo(typeSymbol, semanticModel) != null)
+                return true;
+
+            // Check if it's a MediatR handler (IRequestHandler, INotificationHandler)
+            if (MediatRPatternMatcher.IsMediatRHandler(typeSymbol, semanticModel))
+                return true;
+
+            return false;
+        }
+
+        public async Task<bool> IsInMediatRHandlerContextAsync(ITextView textView)
+        {
+            try
+            {
+                if (!IsValidContext(textView))
+                    return false;
+
+                var document = _workspaceService.GetDocumentFromTextView(textView);
+                if (document == null)
+                    return false;
+
+                var position = textView.Caret.Position.BufferPosition.Position;
+                var syntaxTree = await document.GetSyntaxTreeAsync();
+                if (syntaxTree == null)
+                    return false;
+
+                var textSpan = GetTextSpan(textView, position);
+                var root = await syntaxTree.GetRootAsync();
+                var node = root.FindNode(textSpan, getInnermostNodeForTie: true);
+
+                // Check if we're in a handler class or Handle method
+                var typeDeclaration = node.FirstAncestorOrSelf<TypeDeclarationSyntax>();
+                var methodDeclaration = node.FirstAncestorOrSelf<MethodDeclarationSyntax>();
+
+                if (typeDeclaration == null)
+                    return false;
+
+                var semanticModel = await document.GetSemanticModelAsync();
+                if (semanticModel == null)
+                    return false;
+
+                var typeSymbol = semanticModel.GetDeclaredSymbol(typeDeclaration) as INamedTypeSymbol;
+                
+                // Check if this is a MediatR handler
+                if (IsValidMediatRHandler(typeSymbol, semanticModel))
+                {
+                    // If we're in a Handle method, that's definitely handler context
+                    if (methodDeclaration?.Identifier.ValueText == "Handle")
+                        return true;
+
+                    // If we're on the class name or elsewhere in the handler class, also show
+                    return true;
+                }
+
+                return false;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRContext: Error checking handler context: {ex.Message}");
+                return false;
+            }
+        }
+
+        private bool IsValidMediatRHandler(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
+        {
+            return typeSymbol != null && MediatRPatternMatcher.IsMediatRHandler(typeSymbol, semanticModel);
+        }
+
+        public async Task<bool> IsInMediatRRequestContextAsync(ITextView textView)
+        {
+            try
+            {
+                if (!IsValidContext(textView))
+                    return false;
+
+                var document = _workspaceService.GetDocumentFromTextView(textView);
+                if (document == null)
+                    return false;
+
+                var typeSymbol = await GetMediatRTypeSymbolAsync(textView, textView.Caret.Position.BufferPosition.Position);
+                if (typeSymbol == null)
+                    return false;
+
+                var semanticModel = await document.GetSemanticModelAsync();
+                if (semanticModel == null)
+                    return false;
+
+                // Check if this is a MediatR request (not a handler)
+                return MediatRPatternMatcher.IsMediatRRequest(typeSymbol, semanticModel);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRContext: Error checking request context: {ex.Message}");
+                return false;
+            }
         }
     }
 } 
