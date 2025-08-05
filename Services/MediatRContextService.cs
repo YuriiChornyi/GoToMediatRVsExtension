@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -234,6 +235,407 @@ namespace VSIXExtention.Services
             {
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRContext: Error checking request context: {ex.Message}");
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Determines if cursor is positioned on a nested MediatR call inside a handler method.
+        /// This allows showing both "Go to Implementation" (for nested call) and "Go to Usage" (for current handler).
+        /// </summary>
+        public async Task<bool> IsInNestedMediatRCallContextAsync(ITextView textView)
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Checking nested MediatR context at position {textView.Caret.Position.BufferPosition.Position}");
+                
+                // Performance optimization: early bailout checks
+                if (!IsValidContext(textView))
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Not valid context (not C# file or multiline selection)");
+                    return false;
+                }
+
+                var document = _workspaceService.GetDocumentFromTextView(textView);
+                if (document == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Document is null");
+                    return false;
+                }
+
+                var position = textView.Caret.Position.BufferPosition.Position;
+                var syntaxTree = await document.GetSyntaxTreeAsync();
+                if (syntaxTree == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Syntax tree is null");
+                    return false;
+                }
+
+                var textSpan = GetTextSpan(textView, position);
+                var root = await syntaxTree.GetRootAsync();
+                var node = root.FindNode(textSpan, getInnermostNodeForTie: true);
+
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Found node: {node?.GetType().Name} - '{node?.ToString()?.Trim().Replace("\n", " ").Replace("\r", "")}'");
+
+                // Performance optimization: quick syntax-only checks first
+                var methodDeclaration = node.FirstAncestorOrSelf<MethodDeclarationSyntax>();
+                if (methodDeclaration == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Not in any method");
+                    return false;
+                }
+                
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: In method: {methodDeclaration.Identifier.ValueText}");
+
+                var typeDeclaration = node.FirstAncestorOrSelf<TypeDeclarationSyntax>();
+                if (typeDeclaration == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Type declaration is null");
+                    return false;
+                }
+
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: In method '{methodDeclaration.Identifier.ValueText}' of type: {typeDeclaration.Identifier.ValueText}");
+
+                // Check for potential MediatR calls with syntax-only analysis first
+                var invocationNode = node.FirstAncestorOrSelf<InvocationExpressionSyntax>();
+                var objectCreationNode = node.FirstAncestorOrSelf<ObjectCreationExpressionSyntax>();
+                
+                // Quick syntax check: look for mediator method names
+                bool hasPotentialMediatRCall = false;
+                if (invocationNode?.Expression is MemberAccessExpressionSyntax memberAccess)
+                {
+                    var methodName = memberAccess.Name.Identifier.ValueText;
+                    hasPotentialMediatRCall = methodName == "Send" || methodName == "SendAsync" || 
+                                            methodName == "Publish" || methodName == "PublishAsync";
+                }
+
+                // Also check if we're clicking on a variable that might be passed to a MediatR call
+                bool isVariableInMediatRCall = false;
+                if (!hasPotentialMediatRCall && node is IdentifierNameSyntax identifier)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Checking identifier '{identifier.Identifier.ValueText}' for variable in MediatR call");
+                    
+                    // Check if this identifier is inside an argument list of a potential MediatR call
+                    var argumentList = identifier.FirstAncestorOrSelf<ArgumentListSyntax>();
+                    if (argumentList?.Parent is InvocationExpressionSyntax parentInvocation &&
+                        parentInvocation.Expression is MemberAccessExpressionSyntax parentMemberAccess)
+                    {
+                        var parentMethodName = parentMemberAccess.Name.Identifier.ValueText;
+                        isVariableInMediatRCall = parentMethodName == "Send" || parentMethodName == "SendAsync" || 
+                                                parentMethodName == "Publish" || parentMethodName == "PublishAsync";
+                        
+                        System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Parent method: {parentMethodName}, isVariableInMediatRCall: {isVariableInMediatRCall}");
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: No argument list parent or not member access");
+                    }
+                }
+
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Syntax checks - hasPotentialMediatRCall: {hasPotentialMediatRCall}, isVariableInMediatRCall: {isVariableInMediatRCall}, objectCreationNode: {objectCreationNode != null}");
+
+                // If no potential MediatR calls found syntactically, no need for expensive semantic analysis
+                if (!hasPotentialMediatRCall && !isVariableInMediatRCall && objectCreationNode == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: No potential MediatR calls found syntactically");
+                    return false;
+                }
+
+                // Only now get semantic model (expensive operation)
+                var semanticModel = await document.GetSemanticModelAsync();
+                if (semanticModel == null)
+                    return false;
+
+                var typeSymbol = semanticModel.GetDeclaredSymbol(typeDeclaration) as INamedTypeSymbol;
+
+                // Check if this is a MediatR handler (preferred context)
+                bool isHandlerClass = IsValidMediatRHandler(typeSymbol, semanticModel);
+                
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: {typeSymbol?.Name ?? "null"} isHandlerClass: {isHandlerClass}");
+
+                // Now do full semantic analysis
+                if (invocationNode != null && IsNestedMediatRCall(invocationNode, semanticModel))
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Found nested MediatR call via invocation");
+                    return true;
+                }
+
+                if (objectCreationNode != null && IsNestedMediatRRequestCreation(objectCreationNode, semanticModel))
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Found nested MediatR call via object creation");
+                    return true;
+                }
+
+                // Check if we're on an identifier that represents a nested MediatR request
+                // Only if we haven't found it through other means
+                var requestTypeSymbol = await GetMediatRTypeSymbolAsync(textView, position);
+                if (requestTypeSymbol != null && MediatRPatternMatcher.IsMediatRRequest(requestTypeSymbol, semanticModel))
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Found MediatR request type in nested context: {requestTypeSymbol.Name}");
+                    return true;
+                }
+
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: No nested MediatR context found");
+                return false;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRContext: Error checking nested MediatR context: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Determines if cursor is positioned on a nested MediatR call inside a handler method.
+        /// This is specifically for usage navigation (shallow) - only works inside handler classes.
+        /// </summary>
+        public async Task<bool> IsInNestedMediatRCallInHandlerContextAsync(ITextView textView)
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Checking nested MediatR context IN HANDLER at position {textView.Caret.Position.BufferPosition.Position}");
+                
+                // First check if we're in nested context at all
+                bool isInNestedContext = await IsInNestedMediatRCallContextAsync(textView);
+                if (!isInNestedContext)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Not in nested context");
+                    return false;
+                }
+
+                // Now verify we're actually in a handler class
+                var document = _workspaceService.GetDocumentFromTextView(textView);
+                if (document == null)
+                    return false;
+
+                var position = textView.Caret.Position.BufferPosition.Position;
+                var syntaxTree = await document.GetSyntaxTreeAsync();
+                if (syntaxTree == null)
+                    return false;
+
+                var textSpan = GetTextSpan(textView, position);
+                var root = await syntaxTree.GetRootAsync();
+                var node = root.FindNode(textSpan, getInnermostNodeForTie: true);
+
+                var typeDeclaration = node.FirstAncestorOrSelf<TypeDeclarationSyntax>();
+                if (typeDeclaration == null)
+                    return false;
+
+                var semanticModel = await document.GetSemanticModelAsync();
+                if (semanticModel == null)
+                    return false;
+
+                var typeSymbol = semanticModel.GetDeclaredSymbol(typeDeclaration) as INamedTypeSymbol;
+                bool isHandlerClass = IsValidMediatRHandler(typeSymbol, semanticModel);
+                
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Nested context in handler check - {typeSymbol?.Name} isHandlerClass: {isHandlerClass}");
+                
+                return isHandlerClass;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRContext: Error checking nested MediatR context in handler: {ex.Message}");
+                return false;
+            }
+        }
+
+        private bool IsNestedMediatRCall(InvocationExpressionSyntax invocation, SemanticModel semanticModel)
+        {
+            try
+            {
+                // Check if this is a member access (e.g., _mediator.Send(...))
+                if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
+                {
+                    var methodName = memberAccess.Name.Identifier.ValueText;
+                    
+                    // Check if it's a Send or Publish method
+                    if (methodName == "Send" || methodName == "SendAsync" || 
+                        methodName == "Publish" || methodName == "PublishAsync")
+                    {
+                        // Verify the target is actually a MediatR service
+                        var symbolInfo = semanticModel.GetSymbolInfo(memberAccess.Expression);
+                        var symbol = symbolInfo.Symbol;
+
+                        // Check if the symbol's type is from MediatR namespace
+                        var typeInfo = semanticModel.GetTypeInfo(memberAccess.Expression);
+                        if (typeInfo.Type?.ContainingNamespace?.ToDisplayString() == "MediatR")
+                            return true;
+
+                        // Also check for common MediatR interface patterns
+                        if (typeInfo.Type?.AllInterfaces.Any(i => 
+                            i.ContainingNamespace?.ToDisplayString() == "MediatR" && 
+                            (i.Name == "IMediator" || i.Name == "ISender" || i.Name == "IPublisher")) == true)
+                        {
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private bool IsNestedMediatRRequestCreation(ObjectCreationExpressionSyntax objectCreation, SemanticModel semanticModel)
+        {
+            try
+            {
+                var typeInfo = semanticModel.GetTypeInfo(objectCreation);
+                if (typeInfo.Type is INamedTypeSymbol typeSymbol)
+                {
+                    return MediatRPatternMatcher.IsMediatRRequest(typeSymbol, semanticModel);
+                }
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Gets the specific request type from a nested MediatR call (e.g., the NewQuery from mediator.Send(new NewQuery())).
+        /// This is more precise than GetMediatRTypeSymbolAsync for nested call contexts.
+        /// </summary>
+        public async Task<INamedTypeSymbol> GetNestedRequestTypeAsync(ITextView textView, int position)
+        {
+            try
+            {
+                if (!IsValidContext(textView))
+                    return null;
+
+                var document = _workspaceService.GetDocumentFromTextView(textView);
+                if (document == null)
+                    return null;
+
+                var syntaxTree = await document.GetSyntaxTreeAsync();
+                if (syntaxTree == null)
+                    return null;
+
+                var textSpan = GetTextSpan(textView, position);
+                var root = await syntaxTree.GetRootAsync();
+                var node = root.FindNode(textSpan, getInnermostNodeForTie: true);
+
+                var semanticModel = await document.GetSemanticModelAsync();
+                if (semanticModel == null)
+                    return null;
+
+                // Look for object creation expressions first (new NewQuery())
+                var objectCreation = node.FirstAncestorOrSelf<ObjectCreationExpressionSyntax>();
+                if (objectCreation != null)
+                {
+                    var typeInfo = semanticModel.GetTypeInfo(objectCreation);
+                    if (typeInfo.Type is INamedTypeSymbol createdType && 
+                        MediatRPatternMatcher.IsMediatRRequest(createdType, semanticModel))
+                    {
+                        return createdType;
+                    }
+                }
+
+                // Look for invocation expressions (mediator.Send(...))
+                var invocation = node.FirstAncestorOrSelf<InvocationExpressionSyntax>();
+                if (invocation != null && IsNestedMediatRCall(invocation, semanticModel))
+                {
+                    // Extract the request type from the first argument
+                    if (invocation.ArgumentList?.Arguments.Count > 0)
+                    {
+                        var firstArgument = invocation.ArgumentList.Arguments[0];
+                        var argumentType = semanticModel.GetTypeInfo(firstArgument.Expression);
+                        
+                        if (argumentType.Type is INamedTypeSymbol requestType && 
+                            MediatRPatternMatcher.IsMediatRRequest(requestType, semanticModel))
+                        {
+                            return requestType;
+                        }
+                    }
+                }
+
+                // Look for variable references in MediatR calls (e.g., clicking on 'query' in mediator.Send(query))
+                var parentInvocation = node.FirstAncestorOrSelf<InvocationExpressionSyntax>();
+                if (parentInvocation != null && IsNestedMediatRCall(parentInvocation, semanticModel))
+                {
+                    // Check if the current node is an identifier inside the argument list
+                    var identifierInCall = node as IdentifierNameSyntax;
+                    if (identifierInCall != null)
+                    {
+                        // Check if this identifier is within the argument list of the MediatR call
+                        var argumentList = identifierInCall.FirstAncestorOrSelf<ArgumentListSyntax>();
+                        if (argumentList != null && argumentList.Parent == parentInvocation)
+                        {
+                            // Get the type of the variable being passed
+                            var symbolInfo = semanticModel.GetSymbolInfo(identifierInCall);
+                            
+                            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Variable '{identifierInCall.Identifier.ValueText}' symbol: {symbolInfo.Symbol?.GetType().Name}");
+                            
+                            if (symbolInfo.Symbol is ILocalSymbol localSymbol && 
+                                localSymbol.Type is INamedTypeSymbol variableType)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Variable type: {variableType.Name}");
+                                if (MediatRPatternMatcher.IsMediatRRequest(variableType, semanticModel))
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Found MediatR request type from variable: {variableType.Name}");
+                                    return variableType;
+                                }
+                            }
+                            
+                            // Also handle field/property references
+                            if (symbolInfo.Symbol is IFieldSymbol fieldSymbol && 
+                                fieldSymbol.Type is INamedTypeSymbol fieldType)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Field type: {fieldType.Name}");
+                                if (MediatRPatternMatcher.IsMediatRRequest(fieldType, semanticModel))
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Found MediatR request type from field: {fieldType.Name}");
+                                    return fieldType;
+                                }
+                            }
+                            
+                            if (symbolInfo.Symbol is IPropertySymbol propertySymbol && 
+                                propertySymbol.Type is INamedTypeSymbol propertyType)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Property type: {propertyType.Name}");
+                                if (MediatRPatternMatcher.IsMediatRRequest(propertyType, semanticModel))
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Found MediatR request type from property: {propertyType.Name}");
+                                    return propertyType;
+                                }
+                            }
+                            
+                            // Also try getting type info directly if symbol info fails
+                            var typeInfo = semanticModel.GetTypeInfo(identifierInCall);
+                            if (typeInfo.Type is INamedTypeSymbol directType)
+                            {
+                                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Direct type info: {directType.Name}");
+                                if (MediatRPatternMatcher.IsMediatRRequest(directType, semanticModel))
+                                {
+                                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Found MediatR request type from direct type info: {directType.Name}");
+                                    return directType;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Look for identifier names that represent request types
+                var identifierName = node as IdentifierNameSyntax ?? node.FirstAncestorOrSelf<IdentifierNameSyntax>();
+                if (identifierName != null)
+                {
+                    var symbolInfo = semanticModel.GetSymbolInfo(identifierName);
+                    if (symbolInfo.Symbol is INamedTypeSymbol namedType && 
+                        MediatRPatternMatcher.IsMediatRRequest(namedType, semanticModel))
+                    {
+                        return namedType;
+                    }
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRContext: Error getting nested request type: {ex.Message}");
+                return null;
             }
         }
     }

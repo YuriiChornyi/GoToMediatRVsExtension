@@ -177,11 +177,15 @@ namespace VSIXExtention
                     return;
                 }
 
-                // "Go to MediatR Implementation" should only show when on Request/Command/Query/Notification
+                // "Go to MediatR Implementation" should show when:
+                // 1. On Request/Command/Query/Notification (original behavior)
+                // 2. On nested MediatR call inside handler (new behavior for mixed context)
+                // Performance optimization: check cheaper condition first
                 bool isInRequestContext = await _mediatRContextService.IsInMediatRRequestContextAsync(textView);
+                bool isInNestedCallContext = !isInRequestContext && await _mediatRContextService.IsInNestedMediatRCallContextAsync(textView);
 
-                command.Visible = isInRequestContext;
-                command.Enabled = isInRequestContext;
+                command.Visible = isInRequestContext || isInNestedCallContext;
+                command.Enabled = isInRequestContext || isInNestedCallContext;
                 command.Supported = true;
             }
             catch (Exception ex)
@@ -254,11 +258,15 @@ namespace VSIXExtention
                     return;
                 }
 
-                // "Go to MediatR Send/Publish" should only show when on Handler class or Handle method
+                // "Go to MediatR Send/Publish" should show when:
+                // 1. On Handler class or Handle method (original behavior)
+                // 2. On nested MediatR call inside handler class (new behavior for mixed context)
+                // Performance optimization: check cheaper condition first
                 bool isInHandlerContext = await _mediatRContextService.IsInMediatRHandlerContextAsync(textView);
+                bool isInNestedCallContext = !isInHandlerContext && await _mediatRContextService.IsInNestedMediatRCallInHandlerContextAsync(textView);
 
-                command.Visible = isInHandlerContext;
-                command.Enabled = isInHandlerContext;
+                command.Visible = isInHandlerContext || isInNestedCallContext;
+                command.Enabled = isInHandlerContext || isInNestedCallContext;
                 command.Supported = true;
             }
             catch (Exception ex)

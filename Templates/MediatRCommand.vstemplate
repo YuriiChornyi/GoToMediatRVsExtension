@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<VSTemplate Version="3.0.0" xmlns="http://schemas.microsoft.com/developer/vstemplate/2005" Type="Item">
+    <TemplateData>
+        <Name>MediatR Command</Name>
+        <Description>Creates a new MediatR command class implementing IRequest</Description>
+        <ProjectType>CSharp</ProjectType>
+		<NumberOfParentCategoriesToRollUp>1</NumberOfParentCategoriesToRollUp>
+        <DefaultName>Command.cs</DefaultName>
+        <Icon>MediatRTemplate.ico</Icon>
+        <TemplateID>VSIXExtention.MediatRCommand</TemplateID>
+        <SortOrder>1</SortOrder>
+        <CreateNewFolder>false</CreateNewFolder>
+    </TemplateData>
+    <TemplateContent>
+        <References />
+        <ProjectItem ReplaceParameters="true">MediatRCommand.cs</ProjectItem>
+    </TemplateContent>
+</VSTemplate> 
