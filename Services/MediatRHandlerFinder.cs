@@ -25,11 +25,8 @@ namespace VSIXExtention.Services
                 if (workspace?.CurrentSolution == null)
                     return new List<MediatRHandlerInfo>();
 
-                // Use the new method that finds all handlers (both request and notification)
+                // Use the method that finds all handlers (both request and notification)
                 var allHandlers = await MediatRPatternMatcher.FindAllHandlersForTypeSymbol(workspace.CurrentSolution, requestTypeSymbol, semanticModel);
-
-                // Get all request info to cache individual handler types
-                var allRequestInfo = MediatRPatternMatcher.GetAllRequestInfo(requestTypeSymbol, semanticModel);
 
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRHandlerFinder: Found {allHandlers.Count} total handlers for {requestTypeSymbol.Name}");
                 

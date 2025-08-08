@@ -45,14 +45,11 @@ namespace VSIXExtention.Services
 
     public class NavigationUiService
     {
-        public string ShowHandlerSelectionDialog(HandlerDisplayInfo[] handlers, bool isNotification)
+        public string ShowHandlerSelectionDialog(HandlerDisplayInfo[] handlers, string message)
         {
             try
             {
                 ThreadHelper.ThrowIfNotOnUIThread();
-
-                string handlerType = isNotification ? "notification handler" : "handler";
-                string message = $"Multiple {handlerType}s found. Please select one:";
 
                 var handlerNames = new string[handlers.Length];
                 for (int i = 0; i < handlers.Length; i++)

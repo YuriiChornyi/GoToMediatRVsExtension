@@ -1,0 +1,147 @@
+# Cursor Chat Rules for MediatR Navigation VSIX (C#)
+
+## Context
+
+* Visual Studio 2022 extension (VSIX) targeting **.NET Framework 4.8**.
+* Purpose: navigate from MediatR requests/notifications to their handlers; includes item templates.
+* Core areas:
+
+  * `Services/*` (navigation, discovery, commands)
+  * `Helpers/*` (Roslyn helpers)
+  * `Models/*` (DTOs)
+  * `HandlerSelectionDialog.xaml` (+ code-behind) for selection UI
+  * `VSPackage.vsct`, `VSIXExtentionPackage.cs` (VS integration)
+  * `source.extension.vsixmanifest`, `VSIXExtention.csproj` (packaging/assets)
+
+## Default Behavior
+
+* Work in **C#** for **.NET Framework 4.8**. **Do not** change target framework or supported VS versions without explicit approval.
+* Prefer **small, focused edits**; avoid unrelated reformatting.
+* Reuse existing patterns and services; extend under `Services/*` rather than introducing new frameworks.
+* When adding code, include required `using` directives; keep names clear and descriptive.
+
+## Where to Implement
+
+* MediatR navigation & discovery:
+  `Services/MediatRNavigationService.cs`, `Services/MediatRHandlerFinder.cs`, `Services/MediatRUsageFinder.cs`, `MediatRPatternMatcher.cs`, `Helpers/RoslynSymbolHelper.cs`
+* UI/UX:
+  `HandlerSelectionDialog.xaml` (+ code-behind), `Services/NavigationUiService.cs`
+* VS integration & commands:
+  `VSPackage.vsct`, `VSIXExtentionPackage.cs`, `Services/MediatRCommandHandler.cs`
+
+## VS Threading & Async
+
+* **All Roslyn work must be async and cancellable.** Thread through a `CancellationToken` in service methods.
+* Use `ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync()` **only** when:
+
+  * Showing dialogs/InfoBars or touching DTE/VS services
+  * Command initialization/registration in `InitializeAsync`
+* **Never block** with `.Result`/`.Wait()`. Avoid `ConfigureAwait(false)` on code that returns to UI-affinitized callers.
+
+## Workspace & Current Context
+
+* Resolve `Workspace` via `VisualStudioWorkspace` (`Microsoft.VisualStudio.LanguageServices`).
+* Primary discovery flow:
+
+  1. From **active document/caret**, get `SemanticModel` → symbol at caret.
+  2. Fallback: selected text → symbol lookup.
+* Limit search scope:
+
+  * Prefer project(s) that reference MediatR over the entire solution.
+  * Use `SymbolFinder.FindImplementationsAsync`/`FindReferencesAsync` with narrowed `Project` sets.
+
+## MediatR Pattern Coverage
+
+* Requests: `IRequest`, `IRequest<TResponse>`, **record** or **class**, nested types, generics.
+* Notifications: `INotification`.
+* Streaming: `IStreamRequest<TResponse>`.
+* Handlers:
+
+  * `IRequestHandler<TRequest>` and `<TRequest,TResponse>`
+  * `INotificationHandler<TNotification>`
+  * `IStreamRequestHandler<TRequest,TResponse>`
+* Do **not** assume one handler. If multiple found → show selection UI; if exactly one → navigate directly.
+* Keep conventions centralized in `MediatRPatternMatcher`. Compare **constructed generics** (normalize to concrete `T`s).
+
+## Roslyn Usage Notes
+
+* Prefer **symbol-first** approaches over raw syntax. Use `Helpers/RoslynSymbolHelper` where available.
+* Handle: partial classes, nested types, file-scoped namespaces, global usings.
+* Collect candidates via interface implementation checks (`AllInterfaces`) and generic type argument matching.
+* Return precise locations (method symbol → `Location`) for navigation.
+
+## Navigation Behavior
+
+* **One** handler: open document and navigate to handler method signature.
+* **Many** handlers: show `HandlerSelectionDialog` listing:
+
+  * FQN of handler type, project name, file path, and short method signature/preview.
+* **None**: show InfoBar “No handler found for <symbol>” with a “View search log” action.
+
+## UI / XAML
+
+* Construct dialogs on the **UI thread**; populate view models off-thread, then bind.
+* Keep styling consistent; only minimal changes. Validate bindings/event names.
+* Avoid modal deadlocks; prefer non-blocking patterns (e.g., `await`ed dialog shown from UI thread).
+
+## VS Integration
+
+* New commands:
+
+  * Define under existing group in `VSPackage.vsct`.
+  * Register in `VSIXExtentionPackage.cs` within `InitializeAsync` (switch to UI thread only as needed).
+* Prefer `IVsUIShell` / InfoBars for notifications over message boxes (unless necessary).
+
+## VSIX Constraints & Packaging
+
+* Keep `source.extension.vsixmanifest` consistent:
+
+  * Increment **Version** for any user-visible change.
+  * Ensure assets (`ItemTemplates/*`, icons, license) exist and are included.
+* Mirror manifest assets with `.csproj` items (`Content`/`None` with `IncludeInVSIX` as needed).
+* Do **not** change `Publisher`/`Identity`, installation targets, Roslyn/VS SDK **major** versions without approval.
+
+## Build / Run
+
+* Build **AnyCPU**, **.NET Framework 4.8**.
+* Launch experimental instance with `/rootsuffix Exp`.
+* Preserve current VS version support ranges.
+
+## Quality & Style
+
+* Early-returns, minimal nesting, handle edge-cases first.
+* Comment only non-obvious decisions; keep changes localized.
+* No heavy dependencies; stick to existing VS SDK, Community Toolkit (if present), and Roslyn packages.
+
+## Editing Rules
+
+* Modify **only** the files necessary for the change.
+* Keep XAML and code formatting as-is; no sweeping reformatting.
+* When adding new menu items/commands, wire fully: `vsct` + package init + handlers.
+
+## Telemetry / Logging (Lightweight, Optional)
+
+* Add a tiny debug log behind a flag (e.g., to Output window) for timings and result counts.
+* No PII, and ensure logs are off by default for release.
+
+## User-Facing Docs
+
+* If behavior/commands change, update:
+
+  * `Resources/README.md`
+  * `Templates/README.md` (for item templates)
+
+## When Unsure
+
+* Search `Services/*` for similar patterns; mirror existing abstractions and naming.
+* Prefer extending `MediatRPatternMatcher` (and helpers) over creating parallel logic.
+
+## Acceptance Checklist (Cursor should verify before finishing)
+
+* [ ] Command appears in the intended menu/keyboard binding (`vsct` + package registration).
+* [ ] `IRequest<T>` and `INotification` samples resolve to their handlers and navigate correctly.
+* [ ] Multiple handlers → selection dialog shows and navigates to the chosen handler.
+* [ ] No UI-thread violations; no `.Wait()`/`.Result`; dialogs created on UI thread only.
+* [ ] Manifest version bumped for user-visible changes; assets resolve at build.
+* [ ] Builds **AnyCPU**, targets **.NET Framework 4.8**, launches the **Experimental** instance.
+* [ ] Searches are cancellable and scoped (no whole-solution sync scans unless explicitly requested).

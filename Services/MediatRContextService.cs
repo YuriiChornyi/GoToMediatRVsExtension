@@ -11,6 +11,8 @@ namespace VSIXExtention.Services
     public class MediatRContextService
     {
         private readonly WorkspaceService _workspaceService;
+        private static readonly string[] MediatRSendMethods = { "Send", "SendAsync" };
+        private static readonly string[] MediatRPublishMethods = { "Publish", "PublishAsync" };
         
         public MediatRContextService(WorkspaceService workspaceService)
         {
@@ -301,11 +303,19 @@ namespace VSIXExtention.Services
                 
                 // Quick syntax check: look for mediator method names
                 bool hasPotentialMediatRCall = false;
-                if (invocationNode?.Expression is MemberAccessExpressionSyntax memberAccess)
+                if (invocationNode != null)
                 {
-                    var methodName = memberAccess.Name.Identifier.ValueText;
-                    hasPotentialMediatRCall = methodName == "Send" || methodName == "SendAsync" || 
-                                            methodName == "Publish" || methodName == "PublishAsync";
+                    if (invocationNode.Expression is MemberAccessExpressionSyntax memberAccess)
+                    {
+                        var methodName = memberAccess.Name.Identifier.ValueText;
+                        hasPotentialMediatRCall = IsKnownMediatRMethod(methodName);
+                    }
+                    else if (invocationNode.Expression is MemberBindingExpressionSyntax memberBinding &&
+                             invocationNode.Parent is ConditionalAccessExpressionSyntax)
+                    {
+                        var methodName = memberBinding.Name.Identifier.ValueText;
+                        hasPotentialMediatRCall = IsKnownMediatRMethod(methodName);
+                    }
                 }
 
                 // Also check if we're clicking on a variable that might be passed to a MediatR call
@@ -320,10 +330,16 @@ namespace VSIXExtention.Services
                         parentInvocation.Expression is MemberAccessExpressionSyntax parentMemberAccess)
                     {
                         var parentMethodName = parentMemberAccess.Name.Identifier.ValueText;
-                        isVariableInMediatRCall = parentMethodName == "Send" || parentMethodName == "SendAsync" || 
-                                                parentMethodName == "Publish" || parentMethodName == "PublishAsync";
+                        isVariableInMediatRCall = IsKnownMediatRMethod(parentMethodName);
                         
                         System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Parent method: {parentMethodName}, isVariableInMediatRCall: {isVariableInMediatRCall}");
+                    }
+                    else if (argumentList?.Parent is InvocationExpressionSyntax parentInvocation2 &&
+                             parentInvocation2.Expression is MemberBindingExpressionSyntax parentMemberBinding &&
+                             parentInvocation2.Parent is ConditionalAccessExpressionSyntax)
+                    {
+                        var parentMethodName = parentMemberBinding.Name.Identifier.ValueText;
+                        isVariableInMediatRCall = IsKnownMediatRMethod(parentMethodName);
                     }
                     else
                     {
@@ -372,6 +388,17 @@ namespace VSIXExtention.Services
                 {
                     System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Found MediatR request type in nested context: {requestTypeSymbol.Name}");
                     return true;
+                }
+
+                // Fallback: scan the entire method for any MediatR invocations
+                // This enables the menu even when the caret isn't directly on the call site
+                foreach (var invocation in GetMediatRInvocations(methodDeclaration))
+                {
+                    if (IsNestedMediatRCall(invocation, semanticModel))
+                    {
+                        System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Found nested MediatR call elsewhere in method: {methodDeclaration.Identifier.ValueText}");
+                        return true;
+                    }
                 }
 
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: No nested MediatR context found");
@@ -442,25 +469,35 @@ namespace VSIXExtention.Services
         {
             try
             {
-                // Check if this is a member access (e.g., _mediator.Send(...))
+                // Member access: _mediator.Send(...)
                 if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
                 {
                     var methodName = memberAccess.Name.Identifier.ValueText;
-                    
-                    // Check if it's a Send or Publish method
-                    if (methodName == "Send" || methodName == "SendAsync" || 
-                        methodName == "Publish" || methodName == "PublishAsync")
+                    if (IsKnownMediatRMethod(methodName))
                     {
-                        // Verify the target is actually a MediatR service
-                        var symbolInfo = semanticModel.GetSymbolInfo(memberAccess.Expression);
-                        var symbol = symbolInfo.Symbol;
-
-                        // Check if the symbol's type is from MediatR namespace
                         var typeInfo = semanticModel.GetTypeInfo(memberAccess.Expression);
                         if (typeInfo.Type?.ContainingNamespace?.ToDisplayString() == "MediatR")
                             return true;
+                        if (typeInfo.Type?.AllInterfaces.Any(i => 
+                            i.ContainingNamespace?.ToDisplayString() == "MediatR" && 
+                            (i.Name == "IMediator" || i.Name == "ISender" || i.Name == "IPublisher")) == true)
+                        {
+                            return true;
+                        }
+                    }
+                }
 
-                        // Also check for common MediatR interface patterns
+                // Conditional access: _mediator?.Send(...)
+                if (invocation.Expression is MemberBindingExpressionSyntax memberBinding &&
+                    invocation.Parent is ConditionalAccessExpressionSyntax conditional)
+                {
+                    var methodName = memberBinding.Name.Identifier.ValueText;
+                    if (IsKnownMediatRMethod(methodName))
+                    {
+                        var targetExpr = conditional.Expression;
+                        var typeInfo = semanticModel.GetTypeInfo(targetExpr);
+                        if (typeInfo.Type?.ContainingNamespace?.ToDisplayString() == "MediatR")
+                            return true;
                         if (typeInfo.Type?.AllInterfaces.Any(i => 
                             i.ContainingNamespace?.ToDisplayString() == "MediatR" && 
                             (i.Name == "IMediator" || i.Name == "ISender" || i.Name == "IPublisher")) == true)
@@ -538,18 +575,9 @@ namespace VSIXExtention.Services
                 var invocation = node.FirstAncestorOrSelf<InvocationExpressionSyntax>();
                 if (invocation != null && IsNestedMediatRCall(invocation, semanticModel))
                 {
-                    // Extract the request type from the first argument
-                    if (invocation.ArgumentList?.Arguments.Count > 0)
-                    {
-                        var firstArgument = invocation.ArgumentList.Arguments[0];
-                        var argumentType = semanticModel.GetTypeInfo(firstArgument.Expression);
-                        
-                        if (argumentType.Type is INamedTypeSymbol requestType && 
-                            MediatRPatternMatcher.IsMediatRRequest(requestType, semanticModel))
-                        {
-                            return requestType;
-                        }
-                    }
+                    var extracted = TryExtractRequestTypeFromInvocation(invocation, semanticModel);
+                    if (extracted != null)
+                        return extracted;
                 }
 
                 // Look for variable references in MediatR calls (e.g., clicking on 'query' in mediator.Send(query))
@@ -630,6 +658,21 @@ namespace VSIXExtention.Services
                     }
                 }
 
+                // Fallback: scan the containing method for the first MediatR invocation
+                var methodDeclaration = node.FirstAncestorOrSelf<MethodDeclarationSyntax>();
+                if (methodDeclaration != null)
+                {
+                    foreach (var inv in GetMediatRInvocations(methodDeclaration))
+                    {
+                        if (!IsNestedMediatRCall(inv, semanticModel))
+                            continue;
+
+                        var extracted = TryExtractRequestTypeFromInvocation(inv, semanticModel);
+                        if (extracted != null)
+                            return extracted;
+                    }
+                }
+
                 return null;
             }
             catch (Exception ex)
@@ -637,6 +680,41 @@ namespace VSIXExtention.Services
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRContext: Error getting nested request type: {ex.Message}");
                 return null;
             }
+        }
+
+        private static bool IsKnownMediatRMethod(string methodName)
+        {
+            return MediatRSendMethods.Contains(methodName) || MediatRPublishMethods.Contains(methodName);
+        }
+
+        private static System.Collections.Generic.IEnumerable<InvocationExpressionSyntax> GetMediatRInvocations(MethodDeclarationSyntax method)
+        {
+            return method.DescendantNodes()
+                         .OfType<InvocationExpressionSyntax>()
+                         .Where(inv => inv.Expression is MemberAccessExpressionSyntax ma && IsKnownMediatRMethod(ma.Name.Identifier.ValueText));
+        }
+
+        private static INamedTypeSymbol TryExtractRequestTypeFromInvocation(InvocationExpressionSyntax invocation, SemanticModel semanticModel)
+        {
+            if (invocation?.ArgumentList?.Arguments.Count > 0)
+            {
+                var firstArgument = invocation.ArgumentList.Arguments[0];
+
+                // Object creation: new SomeRequest()
+                if (firstArgument.Expression is ObjectCreationExpressionSyntax created)
+                {
+                    var createdTypeInfo = semanticModel.GetTypeInfo(created).Type as INamedTypeSymbol;
+                    if (createdTypeInfo != null && MediatRPatternMatcher.IsMediatRRequest(createdTypeInfo, semanticModel))
+                        return createdTypeInfo;
+                }
+
+                // General expression type
+                var argumentType = semanticModel.GetTypeInfo(firstArgument.Expression).Type as INamedTypeSymbol;
+                if (argumentType != null && MediatRPatternMatcher.IsMediatRRequest(argumentType, semanticModel))
+                    return argumentType;
+            }
+
+            return null;
         }
     }
 } 

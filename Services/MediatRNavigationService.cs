@@ -69,7 +69,7 @@ namespace VSIXExtention.Services
             }
 
             // Multiple handlers - show selection dialog
-            var result = await NavigateToMultipleHandlersAsync(handlers, isNotification);
+            var result = await NavigateToMultipleHandlersAsync(handlers);
             
             // Handle cancellation vs failure differently
             if (result == null) // Cancellation
@@ -148,9 +148,7 @@ namespace VSIXExtention.Services
             }
         }
 
-        private async Task<bool?> NavigateToMultipleHandlersAsync(
-            List<MediatRHandlerInfo> handlers, 
-            bool isNotification)
+        private async Task<bool?> NavigateToMultipleHandlersAsync(List<MediatRHandlerInfo> handlers)
         {
             try
             {
@@ -187,11 +185,10 @@ namespace VSIXExtention.Services
                 else
                 {
                     // Single type - standard message
-                    string handlerType = isNotification ? "notification handler" : "handler";
-                    message = $"Multiple {handlerType}s found. Please select one:";
+                    message = "Multiple handlers found. Please select one:";
                 }
 
-                var selectedHandlerName = _uiService.ShowHandlerSelectionDialog(handlerDisplayInfo, false);
+                var selectedHandlerName = _uiService.ShowHandlerSelectionDialog(handlerDisplayInfo, message);
                 
                 if (selectedHandlerName == null)
                 {
