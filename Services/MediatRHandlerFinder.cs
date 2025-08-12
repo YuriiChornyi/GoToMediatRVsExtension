@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using VSIXExtention.Models;
@@ -16,7 +17,7 @@ namespace VSIXExtention.Services
             _workspaceService = workspaceService;
         }
 
-        public async Task<List<MediatRHandlerInfo>> FindAllHandlersAsync(INamedTypeSymbol requestTypeSymbol, SemanticModel semanticModel)
+        public async Task<List<MediatRHandlerInfo>> FindAllHandlersAsync(INamedTypeSymbol requestTypeSymbol, SemanticModel semanticModel, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -26,7 +27,7 @@ namespace VSIXExtention.Services
                     return new List<MediatRHandlerInfo>();
 
                 // Use the method that finds all handlers (both request and notification)
-                var allHandlers = await MediatRPatternMatcher.FindAllHandlersForTypeSymbol(workspace.CurrentSolution, requestTypeSymbol, semanticModel);
+                var allHandlers = await MediatRPatternMatcher.FindAllHandlersForTypeSymbol(workspace.CurrentSolution, requestTypeSymbol, semanticModel, cancellationToken);
 
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRHandlerFinder: Found {allHandlers.Count} total handlers for {requestTypeSymbol.Name}");
                 

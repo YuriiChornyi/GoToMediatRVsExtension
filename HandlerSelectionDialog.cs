@@ -8,14 +8,17 @@ namespace VSIXExtention
     {
         public string SelectedHandler { get; private set; }
 
-        public HandlerSelectionDialog(string message, string[] handlerNames)
+        public HandlerSelectionDialog(string title, string message, string[] handlerNames)
         {
             InitializeComponent();
-            InitializeDialog(message, handlerNames);
+            InitializeDialog(title, message, handlerNames);
         }
 
-        private void InitializeDialog(string message, string[] handlerNames)
+        private void InitializeDialog(string title, string message, string[] handlerNames)
         {
+            // Set window title
+            this.Title = string.IsNullOrEmpty(title) ? "Select MediatR Handler" : title;
+
             // Set the message text
             MessageLabel.Text = message;
             

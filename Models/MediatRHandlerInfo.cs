@@ -7,6 +7,7 @@ namespace VSIXExtention.Models
         public string HandlerTypeName { get; set; }
         public string RequestTypeName { get; set; }
         public string ResponseTypeName { get; set; }
+        public INamedTypeSymbol RequestTypeSymbol { get; set; }
         public INamedTypeSymbol HandlerSymbol { get; set; }
         public Location Location { get; set; }
         public bool IsNotificationHandler { get; set; }

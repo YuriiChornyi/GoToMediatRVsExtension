@@ -15,34 +15,9 @@ namespace VSIXExtention.Services
     {
         private VisualStudioWorkspace _cachedWorkspace;
 
-        public void InitializeWorkspace()
+        public void SetWorkspace(VisualStudioWorkspace workspace)
         {
-            var workspace = Package.GetGlobalService(typeof(VisualStudioWorkspace)) as VisualStudioWorkspace;
-
-            if (workspace != null)
-            {
-                _cachedWorkspace = workspace;
-                return;
-            }
-
-            try
-            {
-                var compModel = (IComponentModel)Package.GetGlobalService(typeof(SComponentModel));
-
-                if (compModel != null)
-                {
-                    var vsWorkspace = compModel.GetService<VisualStudioWorkspace>();
-                    _cachedWorkspace = vsWorkspace;
-                }
-                else
-                {
-                    _cachedWorkspace = null;
-                }
-            }
-            catch
-            {
-                _cachedWorkspace = null;
-            }
+            _cachedWorkspace = workspace;
         }
 
         public void Dispose()

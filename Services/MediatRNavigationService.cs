@@ -51,13 +51,6 @@ namespace VSIXExtention.Services
                 var navigationResult = await NavigateToLocationAsync(handlers[0].Location);
                 if (!navigationResult.Success)
                 {
-                    // If navigation failed due to file not found, clear cache for this request type
-                    if (navigationResult.FailureReason == NavigationFailureReason.FileNotFound)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: File not found for handler, clearing cache for: {handlers[0].RequestTypeName}");
-                        MediatRPatternMatcher.ClearCacheForRequestType(handlers[0].HandlerSymbol);
-                    }
-
                     // Try to recover by showing error message
                     await _uiService.ShowErrorMessageAsync(
                         $"Could not navigate to handler '{handlers[0].HandlerTypeName}'.\n\n" +
@@ -201,13 +194,6 @@ namespace VSIXExtention.Services
                     var navigationResult = await NavigateToLocationAsync(selectedHandler.Location);
                     if (!navigationResult.Success)
                     {
-                        // If navigation failed due to file not found, clear cache for this request type
-                        if (navigationResult.FailureReason == NavigationFailureReason.FileNotFound)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: File not found for handler, clearing cache for: {selectedHandler.RequestTypeName}");
-                            MediatRPatternMatcher.ClearCacheForRequestType(selectedHandler.HandlerSymbol);
-                        }
-
                         await _uiService.ShowErrorMessageAsync(
                             $"Could not navigate to handler '{selectedHandler.HandlerTypeName}'.\n\n" +
                             "The handler may have been moved, renamed, or deleted. " +

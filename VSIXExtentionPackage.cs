@@ -36,7 +36,6 @@ namespace VSIXExtention
         public VSIXExtentionPackage()
         {
             _workspaceService = new WorkspaceService();
-            _workspaceService.InitializeWorkspace();
             _mediatRCommandHandler = new MediatRCommandHandler(_workspaceService);
             _mediatRContextService = new MediatRContextService(_workspaceService);
         }
@@ -47,6 +46,12 @@ namespace VSIXExtention
         {
             System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: Starting initialization...");
 
+            // Acquire services asynchronously without switching to UI thread yet
+            var componentModel = await GetServiceAsync(typeof(SComponentModel)) as IComponentModel;
+            var vsWorkspace = componentModel?.GetService<Microsoft.VisualStudio.LanguageServices.VisualStudioWorkspace>();
+            _workspaceService.SetWorkspace(vsWorkspace);
+
+            // Switch to UI thread only for UI-bound operations (menu registration)
             await this.JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
 
             await RegisterCommandsAsync();

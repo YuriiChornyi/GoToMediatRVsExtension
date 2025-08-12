@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -24,7 +25,7 @@ namespace VSIXExtention.Services
         /// <summary>
         /// Finds all places where a specific request type is sent or published
         /// </summary>
-        public async Task<List<MediatRUsageInfo>> FindUsagesAsync(INamedTypeSymbol requestTypeSymbol)
+        public async Task<List<MediatRUsageInfo>> FindUsagesAsync(INamedTypeSymbol requestTypeSymbol, CancellationToken cancellationToken = default)
         {
             var workspace = _workspaceService.GetWorkspace();
             if (workspace?.CurrentSolution == null)
@@ -40,9 +41,9 @@ namespace VSIXExtention.Services
                 .Where(p => p.SupportsCompilation && p.HasDocuments)
                 .Select(async project =>
                 {
-                    var compilation = await project.GetCompilationAsync();
+                    var compilation = await project.GetCompilationAsync(cancellationToken);
                     return compilation != null ? 
-                        await FindUsagesInProject(compilation, requestTypeSymbol) : 
+                        await FindUsagesInProject(compilation, requestTypeSymbol, cancellationToken) : 
                         new List<MediatRUsageInfo>();
                 });
 
@@ -57,7 +58,7 @@ namespace VSIXExtention.Services
             return usages;
         }
 
-        private async Task<List<MediatRUsageInfo>> FindUsagesInProject(Compilation compilation, INamedTypeSymbol requestTypeSymbol)
+        private async Task<List<MediatRUsageInfo>> FindUsagesInProject(Compilation compilation, INamedTypeSymbol requestTypeSymbol, CancellationToken cancellationToken)
         {
             var usages = new List<MediatRUsageInfo>();
             var requestTypeName = requestTypeSymbol.Name;
@@ -68,8 +69,9 @@ namespace VSIXExtention.Services
 
             foreach (var syntaxTree in relevantTrees)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var semanticModel = compilation.GetSemanticModel(syntaxTree);
-                var root = await syntaxTree.GetRootAsync();
+                var root = await syntaxTree.GetRootAsync(cancellationToken);
 
                 // Find all method invocations
                 var invocations = root.DescendantNodes().OfType<InvocationExpressionSyntax>();
