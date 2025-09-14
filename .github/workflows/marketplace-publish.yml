@@ -77,27 +77,67 @@ jobs:
         Write-Host "VSIX Path: $env:VSIX_PATH"
         
         try {
-            # Using the Visual Studio Marketplace API
-            # Note: You may need to adjust this based on the actual CLI tool available
+            # Using the Visual Studio Marketplace REST API
+            # The API requires multipart/form-data format for VSIX uploads
             
-            # Alternative approach using PowerShell and REST API
+            # Create boundary for multipart form data
+            $boundary = [System.Guid]::NewGuid().ToString()
+            $LF = "`r`n"
+            
+            # Read VSIX file content
+            $vsixBytes = [System.IO.File]::ReadAllBytes($env:VSIX_PATH)
+            $vsixFileName = [System.IO.Path]::GetFileName($env:VSIX_PATH)
+            
+            # Create multipart form data body
+            $bodyStart = "--$boundary$LF" +
+                         "Content-Disposition: form-data; name=`"upload`"; filename=`"$vsixFileName`"$LF" +
+                         "Content-Type: application/octet-stream$LF$LF"
+            $bodyEnd = "$LF--$boundary--$LF"
+            
+            # Convert strings to bytes
+            $bodyStartBytes = [System.Text.Encoding]::UTF8.GetBytes($bodyStart)
+            $bodyEndBytes = [System.Text.Encoding]::UTF8.GetBytes($bodyEnd)
+            
+            # Combine all bytes
+            $bodyBytes = $bodyStartBytes + $vsixBytes + $bodyEndBytes
+            
+            # Prepare headers
             $headers = @{
                 'Authorization' = "Basic $([Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(":$env:MARKETPLACE_PAT")))"
-                'Content-Type' = 'application/octet-stream'
+                'Content-Type' = "multipart/form-data; boundary=$boundary"
+                'Accept' = 'application/json'
             }
             
-            $vsixBytes = [System.IO.File]::ReadAllBytes($env:VSIX_PATH)
-            $publishUrl = "https://marketplace.visualstudio.com/_apis/gallery/extensions"
+            $publishUrl = "https://marketplace.visualstudio.com/_apis/gallery/extensions?api-version=7.1-preview.1"
             
-            Write-Host "Uploading VSIX to marketplace..."
-            $response = Invoke-RestMethod -Uri $publishUrl -Method Post -Body $vsixBytes -Headers $headers
+            Write-Host "Uploading VSIX to marketplace using multipart form data..."
+            Write-Host "File size: $($vsixBytes.Length) bytes"
+            Write-Host "API URL: $publishUrl"
+            
+            $response = Invoke-RestMethod -Uri $publishUrl -Method Post -Body $bodyBytes -Headers $headers
             
             Write-Host "Successfully published to Visual Studio Marketplace!"
-            Write-Host "Response: $($response | ConvertTo-Json -Depth 2)"
+            Write-Host "Extension ID: $($response.extensionId)"
+            Write-Host "Publisher: $($response.publisher.publisherName)"
+            Write-Host "Version: $($response.versions[0].version)"
             
         } catch {
             Write-Error "Failed to publish to marketplace: $($_.Exception.Message)"
-            Write-Host "Response content: $($_.Exception.Response | ConvertTo-Json -Depth 2)"
+            
+            # Try to get more detailed error information
+            if ($_.Exception.Response) {
+                $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+                $responseBody = $reader.ReadToEnd()
+                $reader.Close()
+                Write-Host "Response Status: $($_.Exception.Response.StatusCode)"
+                Write-Host "Response Body: $responseBody"
+            }
+            
+            # Additional debugging information
+            Write-Host "Request URL: $publishUrl"
+            Write-Host "VSIX file exists: $(Test-Path $env:VSIX_PATH)"
+            Write-Host "VSIX file size: $((Get-Item $env:VSIX_PATH).Length) bytes"
+            
             exit 1
         }
     
