@@ -50,12 +50,11 @@ jobs:
             exit 1
         }
     
-    - name: Install Visual Studio Marketplace CLI
+    - name: Prepare for marketplace publication
       shell: powershell
       run: |
-        Write-Host "Installing Visual Studio Marketplace tools..."
-        # Install the Visual Studio Marketplace CLI tool
-        dotnet tool install --global Microsoft.VisualStudio.Services.CLI --version 0.1.0-preview
+        Write-Host "Preparing for Visual Studio Marketplace publication..."
+        Write-Host "Using direct REST API approach - no CLI tool installation needed"
     
     - name: Publish to Visual Studio Marketplace
       shell: powershell
