@@ -24,12 +24,17 @@ Jump instantly between MediatR requests/notifications and their handlers, and fr
 - Handler → Usages: place the caret on a handler class or Handle method, press Ctrl+Alt+F11.
 
 ### Supported patterns
-- Requests: `IRequest`, `IRequest<TResponse>`
-- Notifications: `INotification`
-- Handlers: `IRequestHandler<TRequest>`, `IRequestHandler<TRequest,TResponse>`, `INotificationHandler<TNotification>`
+- **Requests**: `IRequest`, `IRequest<TResponse>`
+- **Notifications**: `INotification`
+- **Handlers**: 
+  - `IRequestHandler<TRequest>`, `IRequestHandler<TRequest,TResponse>`
+  - `INotificationHandler<TNotification>`
+  - `IStreamRequestHandler<TRequest,TResponse>` (streaming)
+  - `IRequestExceptionHandler<TRequest,TResponse,TException>` (exception handling)
+  - `IRequestExceptionAction<TRequest,TException>` (exception actions)
 
 ### Requirements
-- Visual Studio 2022 (17.0+)
+- Visual Studio 2022-2026 (17.0-18.x)
 - .NET Framework 4.7.2+
 - Your project references MediatR
 

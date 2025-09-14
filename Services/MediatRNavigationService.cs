@@ -147,10 +147,9 @@ namespace VSIXExtention.Services
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                // Check if we have mixed handler types (both request and notification)
-                var requestHandlers = handlers.Where(h => !h.IsNotificationHandler).ToList();
-                var notificationHandlers = handlers.Where(h => h.IsNotificationHandler).ToList();
-                bool hasMixedTypes = requestHandlers.Any() && notificationHandlers.Any();
+                // Group handlers by type for better display
+                var handlerGroups = handlers.GroupBy(h => h.HandlerType).ToList();
+                bool hasMixedTypes = handlerGroups.Count > 1;
 
                 var handlerDisplayInfo = handlers.Select(h => new HandlerDisplayInfo
                 {
@@ -165,20 +164,30 @@ namespace VSIXExtention.Services
                     var requestTypeName = handlers.First().RequestTypeName;
                     message = $"Multiple handlers found for '{requestTypeName}':\n";
                     
-                    if (requestHandlers.Any())
+                    foreach (var group in handlerGroups)
                     {
-                        message += $"• {requestHandlers.Count} Request Handler(s)\n";
-                    }
-                    if (notificationHandlers.Any())
-                    {
-                        message += $"• {notificationHandlers.Count} Notification Handler(s)\n";
+                        var handlerTypeName = GetHandlerTypeDisplayName(group.Key);
+                        var count = group.Count();
+                        message += $"• {count} {handlerTypeName}";
+                        
+                        // Add exception type info for exception handlers
+                        if (group.Key == MediatRHandlerType.RequestExceptionHandler || group.Key == MediatRHandlerType.RequestExceptionAction)
+                        {
+                            var exceptionTypes = group.Select(h => h.ExceptionTypeName).Distinct().ToList();
+                            if (exceptionTypes.Count > 0)
+                            {
+                                message += $" ({string.Join(", ", exceptionTypes)})";
+                            }
+                        }
+                        message += "\n";
                     }
                     message += "\nPlease select one:";
                 }
                 else
                 {
-                    // Single type - standard message
-                    message = "Multiple handlers found. Please select one:";
+                    // Single type - standard message  
+                    var handlerTypeName = GetHandlerTypeDisplayName(handlers.First().HandlerType);
+                    message = $"Multiple {handlerTypeName.ToLower()}s found. Please select one:";
                 }
 
                 var selectedHandlerName = _uiService.ShowHandlerSelectionDialog(handlerDisplayInfo, message);
@@ -290,7 +299,7 @@ namespace VSIXExtention.Services
                 string prefix = "";
                 if (includePrefixes)
                 {
-                    prefix = handler.IsNotificationHandler ? "[Notification] " : "[Request] ";
+                    prefix = GetHandlerTypePrefix(handler);
                 }
 
                 var filePath = handler.Location?.SourceTree?.FilePath;
@@ -314,9 +323,47 @@ namespace VSIXExtention.Services
                 string prefix = "";
                 if (includePrefixes)
                 {
-                    prefix = handler.IsNotificationHandler ? "[Notification] " : "[Request] ";
+                    prefix = GetHandlerTypePrefix(handler);
                 }
                 return $"{prefix}{handler.HandlerTypeName}";
+            }
+        }
+
+        private string GetHandlerTypePrefix(MediatRHandlerInfo handler)
+        {
+            switch (handler.HandlerType)
+            {
+                case MediatRHandlerType.RequestHandler:
+                    return "[Request] ";
+                case MediatRHandlerType.NotificationHandler:
+                    return "[Notification] ";
+                case MediatRHandlerType.StreamRequestHandler:
+                    return "[Stream] ";
+                case MediatRHandlerType.RequestExceptionHandler:
+                    return $"[Exception:{handler.ExceptionTypeName}] ";
+                case MediatRHandlerType.RequestExceptionAction:
+                    return $"[Action:{handler.ExceptionTypeName}] ";
+                default:
+                    return handler.IsNotificationHandler ? "[Notification] " : "[Request] ";
+            }
+        }
+
+        private string GetHandlerTypeDisplayName(MediatRHandlerType handlerType)
+        {
+            switch (handlerType)
+            {
+                case MediatRHandlerType.RequestHandler:
+                    return "Request Handler";
+                case MediatRHandlerType.NotificationHandler:
+                    return "Notification Handler";
+                case MediatRHandlerType.StreamRequestHandler:
+                    return "Stream Request Handler";
+                case MediatRHandlerType.RequestExceptionHandler:
+                    return "Exception Handler";
+                case MediatRHandlerType.RequestExceptionAction:
+                    return "Exception Action";
+                default:
+                    return "Handler";
             }
         }
 

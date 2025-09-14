@@ -17,6 +17,9 @@ namespace VSIXExtention
         private const string NotificationInterface = "INotification";
         private const string RequestHandlerInterface = "IRequestHandler";
         private const string NotificationHandlerInterface = "INotificationHandler";
+        private const string StreamRequestHandlerInterface = "IStreamRequestHandler";
+        private const string RequestExceptionHandlerInterface = "IRequestExceptionHandler";
+        private const string RequestExceptionActionInterface = "IRequestExceptionAction";
 
         // File extensions to consider for handler searches
         private static readonly string[] CSharpFileExtensions = { ".cs" };
@@ -106,7 +109,11 @@ namespace VSIXExtention
 
             return typeSymbol.AllInterfaces.Any(i =>
                 i.ContainingNamespace?.ToDisplayString() == MediatRNamespace &&
-                (i.Name == RequestHandlerInterface || i.Name == NotificationHandlerInterface));
+                (i.Name == RequestHandlerInterface || 
+                 i.Name == NotificationHandlerInterface ||
+                 i.Name == StreamRequestHandlerInterface ||
+                 i.Name == RequestExceptionHandlerInterface ||
+                 i.Name == RequestExceptionActionInterface));
         }
 
         public static MediatRHandlerInfo GetHandlerInfo(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
@@ -121,19 +128,7 @@ namespace VSIXExtention
                     var requestTypeName = @interface.TypeArguments[0].Name;
                     var responseTypeName = @interface.TypeArguments.Length > 1 ? @interface.TypeArguments[1].Name : null;
 
-                    // Try to resolve the concrete Handle method implementation to navigate directly to it
-                    Location handlerLocation = null;
-                    try
-                    {
-                        var handleInterfaceMethod = @interface.GetMembers()
-                            .OfType<IMethodSymbol>()
-                            .FirstOrDefault(m => m.Name == "Handle");
-                        var implementation = handleInterfaceMethod != null
-                            ? typeSymbol.FindImplementationForInterfaceMember(handleInterfaceMethod) as IMethodSymbol
-                            : null;
-                        handlerLocation = implementation?.Locations.FirstOrDefault();
-                    }
-                    catch { }
+                    var handlerLocation = GetHandlerMethodLocation(typeSymbol, @interface, "Handle");
 
                     return new MediatRHandlerInfo
                     {
@@ -143,25 +138,16 @@ namespace VSIXExtention
                         RequestTypeSymbol = @interface.TypeArguments[0] as INamedTypeSymbol,
                         HandlerSymbol = typeSymbol,
                         Location = handlerLocation ?? typeSymbol.Locations.FirstOrDefault(),
-                        IsNotificationHandler = false
+                        IsNotificationHandler = false,
+                        HandlerType = MediatRHandlerType.RequestHandler,
+                        IsStreamHandler = false,
+                        IsExceptionHandler = false
                     };
                 }
                 else if (@interface.Name == NotificationHandlerInterface && @interface.TypeArguments.Length >= 1)
                 {
                     var requestTypeName = @interface.TypeArguments[0].Name;
-                    // Try to resolve the concrete Handle method implementation to navigate directly to it
-                    Location handlerLocation = null;
-                    try
-                    {
-                        var handleInterfaceMethod = @interface.GetMembers()
-                            .OfType<IMethodSymbol>()
-                            .FirstOrDefault(m => m.Name == "Handle");
-                        var implementation = handleInterfaceMethod != null
-                            ? typeSymbol.FindImplementationForInterfaceMember(handleInterfaceMethod) as IMethodSymbol
-                            : null;
-                        handlerLocation = implementation?.Locations.FirstOrDefault();
-                    }
-                    catch { }
+                    var handlerLocation = GetHandlerMethodLocation(typeSymbol, @interface, "Handle");
 
                     return new MediatRHandlerInfo
                     {
@@ -171,7 +157,75 @@ namespace VSIXExtention
                         RequestTypeSymbol = @interface.TypeArguments[0] as INamedTypeSymbol,
                         HandlerSymbol = typeSymbol,
                         Location = handlerLocation ?? typeSymbol.Locations.FirstOrDefault(),
-                        IsNotificationHandler = true
+                        IsNotificationHandler = true,
+                        HandlerType = MediatRHandlerType.NotificationHandler,
+                        IsStreamHandler = false,
+                        IsExceptionHandler = false
+                    };
+                }
+                else if (@interface.Name == StreamRequestHandlerInterface && @interface.TypeArguments.Length >= 2)
+                {
+                    var requestTypeName = @interface.TypeArguments[0].Name;
+                    var responseTypeName = @interface.TypeArguments[1].Name;
+                    var handlerLocation = GetHandlerMethodLocation(typeSymbol, @interface, "Handle");
+
+                    return new MediatRHandlerInfo
+                    {
+                        HandlerTypeName = typeSymbol.Name,
+                        RequestTypeName = requestTypeName,
+                        ResponseTypeName = responseTypeName,
+                        RequestTypeSymbol = @interface.TypeArguments[0] as INamedTypeSymbol,
+                        HandlerSymbol = typeSymbol,
+                        Location = handlerLocation ?? typeSymbol.Locations.FirstOrDefault(),
+                        IsNotificationHandler = false,
+                        HandlerType = MediatRHandlerType.StreamRequestHandler,
+                        IsStreamHandler = true,
+                        IsExceptionHandler = false
+                    };
+                }
+                else if (@interface.Name == RequestExceptionHandlerInterface && @interface.TypeArguments.Length >= 3)
+                {
+                    var requestTypeName = @interface.TypeArguments[0].Name;
+                    var responseTypeName = @interface.TypeArguments[1].Name;
+                    var exceptionTypeName = @interface.TypeArguments[2].Name;
+                    var handlerLocation = GetHandlerMethodLocation(typeSymbol, @interface, "Handle");
+
+                    return new MediatRHandlerInfo
+                    {
+                        HandlerTypeName = typeSymbol.Name,
+                        RequestTypeName = requestTypeName,
+                        ResponseTypeName = responseTypeName,
+                        RequestTypeSymbol = @interface.TypeArguments[0] as INamedTypeSymbol,
+                        HandlerSymbol = typeSymbol,
+                        Location = handlerLocation ?? typeSymbol.Locations.FirstOrDefault(),
+                        IsNotificationHandler = false,
+                        HandlerType = MediatRHandlerType.RequestExceptionHandler,
+                        IsStreamHandler = false,
+                        IsExceptionHandler = true,
+                        ExceptionTypeName = exceptionTypeName,
+                        ExceptionTypeSymbol = @interface.TypeArguments[2] as INamedTypeSymbol
+                    };
+                }
+                else if (@interface.Name == RequestExceptionActionInterface && @interface.TypeArguments.Length >= 2)
+                {
+                    var requestTypeName = @interface.TypeArguments[0].Name;
+                    var exceptionTypeName = @interface.TypeArguments[1].Name;
+                    var handlerLocation = GetHandlerMethodLocation(typeSymbol, @interface, "Execute");
+
+                    return new MediatRHandlerInfo
+                    {
+                        HandlerTypeName = typeSymbol.Name,
+                        RequestTypeName = requestTypeName,
+                        ResponseTypeName = null,
+                        RequestTypeSymbol = @interface.TypeArguments[0] as INamedTypeSymbol,
+                        HandlerSymbol = typeSymbol,
+                        Location = handlerLocation ?? typeSymbol.Locations.FirstOrDefault(),
+                        IsNotificationHandler = false,
+                        HandlerType = MediatRHandlerType.RequestExceptionAction,
+                        IsStreamHandler = false,
+                        IsExceptionHandler = true,
+                        ExceptionTypeName = exceptionTypeName,
+                        ExceptionTypeSymbol = @interface.TypeArguments[1] as INamedTypeSymbol
                     };
                 }
             }
@@ -179,32 +233,38 @@ namespace VSIXExtention
             return null;
         }
 
+        private static Location GetHandlerMethodLocation(INamedTypeSymbol typeSymbol, INamedTypeSymbol @interface, string methodName)
+        {
+            try
+            {
+                var interfaceMethod = @interface.GetMembers()
+                    .OfType<IMethodSymbol>()
+                    .FirstOrDefault(m => m.Name == methodName);
+                var implementation = interfaceMethod != null
+                    ? typeSymbol.FindImplementationForInterfaceMember(interfaceMethod) as IMethodSymbol
+                    : null;
+                return implementation?.Locations.FirstOrDefault();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         /// <summary>
-        /// Finds all handlers (both request and notification) for a given type symbol
+        /// Finds all handler types (request, notification, stream, exception handlers, and exception actions) for a given type symbol
         /// </summary>
         public static async Task<List<MediatRHandlerInfo>> FindAllHandlersForTypeSymbol(Solution solution, INamedTypeSymbol typeSymbol, SemanticModel semanticModel, CancellationToken cancellationToken = default)
         {
             var uniqueHandlers = new HashSet<MediatRHandlerInfo>();
-            var allRequestInfo = GetAllRequestInfo(typeSymbol, semanticModel);
 
-            foreach (var requestInfo in allRequestInfo)
+            // Find all handler types for this request/notification type
+            var handlers = await FindHandlersInSolutionBySymbol(solution, typeSymbol, cancellationToken);
+            
+            // Add handlers to HashSet to automatically deduplicate
+            foreach (var handler in handlers)
             {
-                List<MediatRHandlerInfo> handlers;
-                
-                if (requestInfo.IsNotification)
-                {
-                    handlers = await FindNotificationHandlersInSolutionBySymbol(solution, typeSymbol, true, cancellationToken);
-                }
-                else
-                {
-                    handlers = await FindHandlersInSolutionBySymbol(solution, typeSymbol, false, cancellationToken);
-                }
-                
-                // Add handlers to HashSet to automatically deduplicate
-                foreach (var handler in handlers)
-                {
-                    uniqueHandlers.Add(handler);
-                }
+                uniqueHandlers.Add(handler);
             }
 
             var result = uniqueHandlers.ToList();
@@ -213,24 +273,39 @@ namespace VSIXExtention
         }
 
         /// <summary>
-        /// Finds handlers in solution using type symbol for more specific caching
+        /// Finds all handler types in solution for a given request type symbol
         /// </summary>
-        public static async Task<List<MediatRHandlerInfo>> FindHandlersInSolutionBySymbol(Solution solution, INamedTypeSymbol requestTypeSymbol, bool isNotification, CancellationToken cancellationToken = default)
+        public static async Task<List<MediatRHandlerInfo>> FindHandlersInSolutionBySymbol(Solution solution, INamedTypeSymbol requestTypeSymbol, CancellationToken cancellationToken = default)
         {
             var handlers = new List<MediatRHandlerInfo>();
             var requestTypeName = requestTypeSymbol.Name;
 
             // Use parallel processing for better performance
             var projectTasks = solution.Projects
-                .Where(p => p.SupportsCompilation && p.HasDocuments) // Filter early
+                .Where(p => p.SupportsCompilation && p.HasDocuments && p.Language == LanguageNames.CSharp) // Filter early to C# compilations only
                 .Select(async project =>
                 {
                     var compilation = await project.GetCompilationAsync(cancellationToken);
-                    return compilation != null ? 
-                        (isNotification ? 
-                            await FindNotificationHandlersInProject(compilation, requestTypeSymbol, cancellationToken) : 
-                            await FindHandlersInProject(compilation, requestTypeSymbol, cancellationToken)) : 
-                        new List<MediatRHandlerInfo>();
+                    if (compilation == null)
+                    {
+                        return new List<MediatRHandlerInfo>();
+                    }
+
+                    // Scope: process only projects that reference MediatR
+                    var hasMediatR = compilation.GetTypeByMetadataName("MediatR.IRequest") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.INotification") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.IRequestHandler`2") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.IRequestHandler`1") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.INotificationHandler`1") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.IStreamRequestHandler`2") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.IRequestExceptionHandler`3") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.IRequestExceptionAction`2") != null;
+                    if (!hasMediatR)
+                    {
+                        return new List<MediatRHandlerInfo>();
+                    }
+
+                    return await FindAllHandlerTypesInProject(compilation, requestTypeSymbol, cancellationToken);
                 });
 
             var projectResults = await Task.WhenAll(projectTasks);
@@ -243,10 +318,11 @@ namespace VSIXExtention
             // Log handler details for debugging
             if (handlers.Count > 0)
             {
-                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Found {handlers.Count} {(isNotification ? "notification" : "request")} handler(s) for: {requestTypeSymbol.Name}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Found {handlers.Count} handler(s) for: {requestTypeSymbol.Name}");
                 foreach (var handler in handlers)
                 {
-                    System.Diagnostics.Debug.WriteLine($"  - Found {(isNotification ? "notification" : "request")} handler: {handler.HandlerTypeName} at {handler.Location?.SourceTree?.FilePath}");
+                    var handlerTypeDesc = GetHandlerTypeDescription(handler.HandlerType);
+                    System.Diagnostics.Debug.WriteLine($"  - Found {handlerTypeDesc}: {handler.HandlerTypeName} at {handler.Location?.SourceTree?.FilePath}");
                 }
             }
             else
@@ -257,15 +333,11 @@ namespace VSIXExtention
             return handlers;
         }
 
+
         /// <summary>
-        /// Convenience method for finding notification handlers by symbol
+        /// Finds all handler types (request, notification, stream, exception handlers, and exception actions) for a given request type in a project
         /// </summary>
-        public static async Task<List<MediatRHandlerInfo>> FindNotificationHandlersInSolutionBySymbol(Solution solution, INamedTypeSymbol requestTypeSymbol, bool isNotification, CancellationToken cancellationToken = default)
-        {
-            return await FindHandlersInSolutionBySymbol(solution, requestTypeSymbol, isNotification, cancellationToken);
-        }
-
-        private static async Task<List<MediatRHandlerInfo>> FindHandlersInProject(Compilation compilation, INamedTypeSymbol requestTypeSymbol, CancellationToken cancellationToken)
+        private static async Task<List<MediatRHandlerInfo>> FindAllHandlerTypesInProject(Compilation compilation, INamedTypeSymbol requestTypeSymbol, CancellationToken cancellationToken)
         {
             var handlers = new List<MediatRHandlerInfo>();
 
@@ -287,8 +359,7 @@ namespace VSIXExtention
                     if (typeSymbol == null) continue;
 
                     var handlerInfo = GetHandlerInfo(typeSymbol, semanticModel);
-                    if (handlerInfo != null && !handlerInfo.IsNotificationHandler &&
-                        AreTypesEqual(handlerInfo.RequestTypeSymbol, requestTypeSymbol))
+                    if (handlerInfo != null && AreTypesEqual(handlerInfo.RequestTypeSymbol, requestTypeSymbol))
                     {
                         handlers.Add(handlerInfo);
                     }
@@ -298,37 +369,23 @@ namespace VSIXExtention
             return handlers;
         }
 
-        private static async Task<List<MediatRHandlerInfo>> FindNotificationHandlersInProject(Compilation compilation, INamedTypeSymbol notificationTypeSymbol, CancellationToken cancellationToken)
+        private static string GetHandlerTypeDescription(MediatRHandlerType handlerType)
         {
-            var handlers = new List<MediatRHandlerInfo>();
-
-            // Filter syntax trees early - only process C# files
-            var relevantTrees = compilation.SyntaxTrees
-                .Where(tree => tree.FilePath != null && CSharpFileExtensions.Any(ext => tree.FilePath.EndsWith(ext, StringComparison.OrdinalIgnoreCase)));
-
-            foreach (var syntaxTree in relevantTrees)
+            switch (handlerType)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var semanticModel = compilation.GetSemanticModel(syntaxTree);
-                var root = await syntaxTree.GetRootAsync(cancellationToken);
-
-                var typeDeclarations = root.DescendantNodes().OfType<TypeDeclarationSyntax>();
-
-                foreach (var typeDecl in typeDeclarations)
-                {
-                    var typeSymbol = semanticModel.GetDeclaredSymbol(typeDecl) as INamedTypeSymbol;
-                    if (typeSymbol == null) continue;
-
-                    var handlerInfo = GetHandlerInfo(typeSymbol, semanticModel);
-                    if (handlerInfo != null && handlerInfo.IsNotificationHandler &&
-                        AreTypesEqual(handlerInfo.RequestTypeSymbol, notificationTypeSymbol))
-                    {
-                        handlers.Add(handlerInfo);
-                    }
-                }
+                case MediatRHandlerType.RequestHandler:
+                    return "request handler";
+                case MediatRHandlerType.NotificationHandler:
+                    return "notification handler";
+                case MediatRHandlerType.StreamRequestHandler:
+                    return "stream handler";
+                case MediatRHandlerType.RequestExceptionHandler:
+                    return "exception handler";
+                case MediatRHandlerType.RequestExceptionAction:
+                    return "exception action";
+                default:
+                    return "handler";
             }
-
-            return handlers;
         }
 
         private static bool AreTypesEqual(INamedTypeSymbol type1, INamedTypeSymbol type2)
