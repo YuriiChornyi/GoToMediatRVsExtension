@@ -144,13 +144,44 @@ jobs:
             
             Write-Host "Found VsixPublisher.exe: $vsixPublisherPath" -ForegroundColor Green
             
+            # Use existing publish manifest file
+            Write-Host "Using existing publish manifest..." -ForegroundColor Cyan
+            
+            $manifestPath = "publishManifest.json"
+            if (-not (Test-Path $manifestPath)) {
+                Write-Error "Publish manifest not found: $manifestPath"
+                Write-Host "Please ensure publishManifest.json exists in the repository root."
+                exit 1
+            }
+            
+            # Verify the manifest file is valid JSON
+            try {
+                $publishManifestContent = Get-Content $manifestPath -Raw | ConvertFrom-Json
+                Write-Host "✅ Publish manifest validated: $manifestPath"
+                Write-Host "Publisher: $($publishManifestContent.publisher)"
+                Write-Host "Categories: $($publishManifestContent.categories -join ', ')"
+                Write-Host "Repository: $($publishManifestContent.repo)"
+            } catch {
+                Write-Error "Invalid JSON in publish manifest: $($_.Exception.Message)"
+                exit 1
+            }
+            
+            # Verify overview file exists (as referenced in manifest)
+            $overviewPath = $publishManifestContent.overview
+            if ($overviewPath -and -not (Test-Path $overviewPath)) {
+                Write-Warning "Overview file not found: $overviewPath (referenced in publishManifest.json)"
+                Write-Host "Please ensure the overview file exists or update the manifest path."
+            } else {
+                Write-Host "✅ Overview file found: $overviewPath"
+            }
+            
             # Publish using VsixPublisher.exe
             Write-Host "Publishing extension..." -ForegroundColor Cyan
             
             $publishArgs = @(
                 "publish"
                 "-payload", "`"$($env:VSIX_PATH)`""
-                "-publishManifest", "`"$($env:VSIX_PATH)`""
+                "-publishManifest", "`"$manifestPath`""
                 "-personalAccessToken", $env:MARKETPLACE_PAT
                 "-ignoreWarnings", "VSIXValidatorWarning01,VSIXValidatorWarning02"
             )
@@ -189,7 +220,7 @@ jobs:
             Write-Host $_.ScriptStackTrace -ForegroundColor Red
             exit 1
         } finally {
-            # Clean up output files
+            # Clean up temporary files (keep publishManifest.json and overview files as they're part of the repo)
             Remove-Item "publish-output.txt" -ErrorAction SilentlyContinue
             Remove-Item "publish-error.txt" -ErrorAction SilentlyContinue
         }

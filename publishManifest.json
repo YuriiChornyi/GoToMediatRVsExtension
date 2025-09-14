@@ -1,0 +1,26 @@
+{
+    "$schema": "http://json.schemastore.org/vsix-publish",
+    "categories": [ "coding" ],
+    "icon": "Resources/icon_90_90.png",
+    "identity": { "internalName": "mediatr-navigation-extension-2022" },
+    "publisher": "YuriiChornyi",
+    "overview": "Resources/Overview.md",
+    "qna": true,
+    "priceCategory": "free",
+    "repo": "https://github.com/YuriiChornyi/GoToMediatRVsExtension",
+    "tags": [ "CQRS", "Navigation", "MediatR" ],
+    "assetFiles": [
+        {
+            "path": "Resources/icon_90_90.png",
+            "addressable": true
+        },
+        {
+            "path": "Resources/Animation.gif",
+            "addressable": true
+        },
+        {
+            "path": "Resources/Animation2.gif",
+            "addressable": true
+        }
+    ]
+}

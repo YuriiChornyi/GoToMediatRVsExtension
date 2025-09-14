@@ -84,7 +84,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include=".editorconfig" />
-    <None Include="Resources\README.md" />
     <None Include="source.extension.vsixmanifest">
       <SubType>Designer</SubType>
     </None>

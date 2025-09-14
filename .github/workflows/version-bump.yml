@@ -79,14 +79,46 @@ jobs:
       shell: powershell
       run: |
         $newVersion = "${{ steps.version.outputs.new-version }}"
-        Write-Host "Updating manifest to version: $newVersion"
+        Write-Host "Updating VSIX manifest to version: $newVersion"
         
-        # Update source.extension.vsixmanifest
-        [xml]$manifest = Get-Content "source.extension.vsixmanifest"
-        $manifest.PackageManifest.Metadata.Identity.Version = $newVersion
-        $manifest.Save("source.extension.vsixmanifest")
+        # Backup original file
+        Copy-Item "source.extension.vsixmanifest" "source.extension.vsixmanifest.backup"
         
-        Write-Host "Manifest updated successfully"
+        try {
+            # Update source.extension.vsixmanifest
+            [xml]$manifest = Get-Content "source.extension.vsixmanifest"
+            
+            # Verify we can access the version attribute
+            $currentVersion = $manifest.PackageManifest.Metadata.Identity.Version
+            Write-Host "Current manifest version: $currentVersion"
+            
+            # Update the version
+            $manifest.PackageManifest.Metadata.Identity.Version = $newVersion
+            
+            # Save with proper formatting
+            $manifest.Save((Resolve-Path "source.extension.vsixmanifest").Path)
+            
+            # Verify the update worked
+            [xml]$verifyManifest = Get-Content "source.extension.vsixmanifest"
+            $updatedVersion = $verifyManifest.PackageManifest.Metadata.Identity.Version
+            
+            if ($updatedVersion -eq $newVersion) {
+                Write-Host "✅ VSIX manifest updated successfully: $currentVersion → $newVersion"
+                Remove-Item "source.extension.vsixmanifest.backup" -ErrorAction SilentlyContinue
+            } else {
+                throw "Version verification failed. Expected: $newVersion, Got: $updatedVersion"
+            }
+            
+        } catch {
+            Write-Error "Failed to update VSIX manifest: $($_.Exception.Message)"
+            # Restore backup
+            if (Test-Path "source.extension.vsixmanifest.backup") {
+                Copy-Item "source.extension.vsixmanifest.backup" "source.extension.vsixmanifest"
+                Remove-Item "source.extension.vsixmanifest.backup"
+                Write-Host "Restored original manifest from backup"
+            }
+            exit 1
+        }
     
     - name: Update AssemblyInfo (if exists)
       shell: powershell
@@ -108,10 +140,25 @@ jobs:
         }
     
     - name: Commit version changes
+      shell: powershell
       run: |
-        git add source.extension.vsixmanifest Properties/AssemblyInfo.cs
-        git commit -m "Bump version to ${{ steps.version.outputs.new-version }}" || exit 0
-        git push origin HEAD
+        $newVersion = "${{ steps.version.outputs.new-version }}"
+        Write-Host "Committing version changes..."
+        
+        git add source.extension.vsixmanifest
+        if (Test-Path "Properties\AssemblyInfo.cs") {
+            git add "Properties\AssemblyInfo.cs"
+        }
+        
+        $commitMessage = "Bump version to $newVersion"
+        git diff --cached --quiet
+        if ($LASTEXITCODE -ne 0) {
+            git commit -m $commitMessage
+            git push origin HEAD
+            Write-Host "Version changes committed and pushed"
+        } else {
+            Write-Host "No changes to commit"
+        }
     
     - name: Create and push tag
       run: |
@@ -132,42 +179,22 @@ jobs:
         $newVersion = "${{ steps.version.outputs.new-version }}"
         $currentVersion = "${{ steps.version.outputs.current-version }}"
         
-        $releaseNotes = @"
-        # MediatR Navigation Extension v$newVersion
+        # Generate release notes from README.md with version-specific header
+        if (-not (Test-Path "README.md")) {
+            Write-Error "README.md not found!"
+            exit 1
+        }
         
-        ## Changes from v$currentVersion to v$newVersion
+        # Read README content
+        $readmeContent = Get-Content "README.md" -Raw
         
-        ### New Features
-        - Enhanced MediatR pattern support
-        - Improved navigation experience
-        - Better error handling and diagnostics
+        # Create release notes with version header and README content
+        $releaseNotes = @"$readmeContent"@
         
-        ### Bug Fixes
-        - Various stability improvements
-        - Performance optimizations
-        
-        ### Technical Improvements
-        - Updated dependencies
-        - Code quality improvements
-        
-        ## Installation
-        
-        1. Download the `.vsix` file from the assets below
-        2. In Visual Studio, go to Extensions → Manage Extensions
-        3. Click "Install from VSIX" and select the downloaded file
-        4. Restart Visual Studio
-        
-        ## Requirements
-        - Visual Studio 2022-2026 (17.0-18.x)
-        - .NET Framework 4.7.2+
-        - MediatR package in your project
-        
-        "@
-        
-        # Save to file for the release
+        # Save to temporary file for the release
         $releaseNotes | Out-File -FilePath "release-notes.md" -Encoding UTF8
         
-        # Also output for GitHub (escape newlines)
+        # Also output for GitHub (escape newlines)  
         $escapedNotes = $releaseNotes -replace "`r`n", "%0A" -replace "`n", "%0A"
         echo "notes=$escapedNotes" >> $env:GITHUB_OUTPUT
     
@@ -182,3 +209,11 @@ jobs:
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Clean up temporary files
+      shell: powershell
+      run: |
+        # Remove temporary files created during the workflow
+        Remove-Item "release-notes.md" -ErrorAction SilentlyContinue
+        Remove-Item "source.extension.vsixmanifest.backup" -ErrorAction SilentlyContinue
+        Write-Host "Temporary files cleaned up"

@@ -4,40 +4,32 @@ This directory contains GitHub Actions workflows for automated building, testing
 
 ## 🚀 Workflows Overview
 
-### 1. **Build and Publish** (`build-and-publish.yml`)
+### 1. **Build and Test** (`build-and-publish.yml`)
 - **Triggers**: Push to main, tags, PRs, manual dispatch
-- **Purpose**: Main CI/CD pipeline for building and testing
+- **Purpose**: CI/CD pipeline for building and testing only
 - **Features**:
   - Builds VSIX package
   - Runs integrity tests
-  - Creates GitHub releases for tags
   - Uploads build artifacts
+  - No publishing (handled by separate workflows)
 
-### 2. **Marketplace Publish** (`marketplace-publish.yml`)
-- **Triggers**: GitHub releases, manual dispatch
-- **Purpose**: Publishes to Visual Studio Marketplace
-- **Features**:
-  - Automated marketplace publishing
-  - Version validation
-  - Release notes integration
-
-### 3. **Version Bump** (`version-bump.yml`)
+### 2. **Version Bump** (`version-bump.yml`)
 - **Triggers**: Manual dispatch only
-- **Purpose**: Automated version management
+- **Purpose**: Automated version management and release creation
 - **Features**:
   - Semantic version bumping (major/minor/patch)
   - Custom version support
   - Automatic git tagging
-  - Draft release creation
+  - Draft release creation with README-based notes
 
-### 4. **PR Validation** (`pr-validation.yml`)
-- **Triggers**: Pull requests to main
-- **Purpose**: Validate PRs before merging
+### 3. **Marketplace Publish** (`marketplace-publish.yml`)
+- **Triggers**: GitHub releases (published), manual dispatch
+- **Purpose**: Publishes to Visual Studio Marketplace using VsixPublisher.exe
 - **Features**:
-  - Build validation
-  - Static code analysis
-  - Manifest validation
-  - Version conflict detection
+  - Automated marketplace publishing on release
+  - Uses custom publishManifest.json
+  - Attaches VSIX to GitHub releases
+  - Comprehensive error handling and validation
 
 ## ⚙️ Setup Instructions
 
@@ -56,12 +48,10 @@ MARKETPLACE_PAT
   3. Generate a PAT with `Marketplace (publish)` scope
   4. Copy the token to this secret
 
-#### Optional Secrets:
-```
-VSCE_PAT
-```
-- **Description**: Alternative publishing token (if using different method)
-- **Note**: Currently used as fallback, may not be needed
+#### Notes:
+- Only `MARKETPLACE_PAT` is required
+- Uses Azure DevOps Personal Access Token with `Marketplace (Publish)` scope
+- No other secrets needed for the current setup
 
 ### 2. **Environment Protection**
 
@@ -93,20 +83,25 @@ Configure branch protection for main:
    - Open PR → Triggers `pr-validation.yml`
    - Merge PR → Triggers `build-and-publish.yml`
 
-2. **Release Process**:
+2. **Release Process** (Recommended):
    ```bash
-   # Option 1: Manual version bump
+   # Step 1: Use Version Bump workflow
    # Go to Actions → Version Bump → Run workflow
    # Select version type (patch/minor/major)
+   # This creates a DRAFT release
    
-   # Option 2: Manual tagging
-   git tag v6.5.0
-   git push origin v6.5.0
+   # Step 2: Publish the draft release
+   # Go to Releases → Edit draft → Publish release
+   # This automatically triggers marketplace publishing
    ```
 
-3. **Publishing to Marketplace**:
-   - Create GitHub release → Triggers `marketplace-publish.yml`
-   - Or manually dispatch `marketplace-publish.yml`
+3. **Alternative Release Process**:
+   ```bash
+   # Manual approach (not recommended)
+   git tag v6.5.0
+   git push origin v6.5.0
+   # Then manually create release from tag
+   ```
 
 ### **Manual Workflows**
 
@@ -125,8 +120,8 @@ Actions → Publish to Visual Studio Marketplace → Run workflow
 
 #### Force Build:
 ```
-Actions → Build and Publish → Run workflow
-└── Publish to Marketplace: true/false
+Actions → Build and Test → Run workflow
+└── (No parameters - builds and tests only)
 ```
 
 ## 📦 Artifacts
