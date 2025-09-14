@@ -29,7 +29,7 @@ namespace VSIXExtention.Services
             _navigationService = new MediatRNavigationService(ServiceProvider.GlobalProvider, _uiService);
         }
 
-        public async Task<bool> ExecuteGoToImplementationAsync(ITextView textView, int position)
+        public async Task<bool> ExecuteGoToImplementationAsync(ITextView textView, int position, System.Threading.CancellationToken cancellationToken = default)
         {
             try
             {
@@ -39,6 +39,7 @@ namespace VSIXExtention.Services
                     progress.Report(0.1, "Analyzing current position...");
                     
                     // Step 1: Determine the request type to navigate to (handles both direct requests and nested calls)
+                    cancellationToken.ThrowIfCancellationRequested();
                     var targetRequestType = await GetTargetRequestTypeForImplementation(textView, position);
                     if (targetRequestType == null)
                     {
@@ -56,7 +57,7 @@ namespace VSIXExtention.Services
                     
                     // Step 2: Get semantic model for the document
                     var document = _workspaceService.GetDocumentFromTextView(textView);
-                    var semanticModel = document != null ? await document.GetSemanticModelAsync() : null;
+                    var semanticModel = document != null ? await document.GetSemanticModelAsync(cancellationToken) : null;
 
                     progress.Report(0.5, "Searching for handlers...");
                     
@@ -64,7 +65,8 @@ namespace VSIXExtention.Services
                     bool implementsBoth = MediatRPatternMatcher.ImplementsBothRequestAndNotification(targetRequestType, semanticModel);
                     
                     // Step 4: Find all handlers (both request and notification if applicable)
-                    var allHandlers = await _handlerFinder.FindAllHandlersAsync(targetRequestType, semanticModel);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var allHandlers = await _handlerFinder.FindAllHandlersAsync(targetRequestType, semanticModel, cancellationToken);
                     
                     progress.Report(0.8, "Processing results...");
                     
@@ -116,26 +118,7 @@ namespace VSIXExtention.Services
                     // The navigation service will show them grouped by type
                     var navigationSuccess = await _navigationService.NavigateToHandlersAsync(allHandlers, false);
                     
-                    // If navigation failed and we have handlers, try once more with fresh cache
-                    if (!navigationSuccess && allHandlers.Count > 0)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRCommandHandler: Navigation failed, retrying with fresh cache for: {targetRequestType.Name}");
-                        
-                        // Clear cache and try to find handlers again
-                        MediatRPatternMatcher.ClearCacheForRequestType(targetRequestType);
-                        var freshHandlers = await _handlerFinder.FindAllHandlersAsync(targetRequestType, semanticModel);
-                        
-                        if (freshHandlers?.Count > 0)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRCommandHandler: Found {freshHandlers.Count} handlers after cache refresh");
-                            return await _navigationService.NavigateToHandlersAsync(freshHandlers, false);
-                        }
-                        else
-                        {
-                            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRCommandHandler: No handlers found after cache refresh");
-                        }
-                    }
-                    
+                    // If navigation failed, just return the result (no cache retry)
                     return navigationSuccess;
                 }
             }
@@ -147,7 +130,7 @@ namespace VSIXExtention.Services
             }
         }
 
-        public async Task<bool> ExecuteGoToUsageAsync(ITextView textView, int position)
+        public async Task<bool> ExecuteGoToUsageAsync(ITextView textView, int position, System.Threading.CancellationToken cancellationToken = default)
         {
             try
             {
@@ -157,6 +140,7 @@ namespace VSIXExtention.Services
                     progress.Report(0.1, "Analyzing current position...");
                     
                     // Step 1: Determine the request type to find usages for (handles both handlers and nested calls)
+                    cancellationToken.ThrowIfCancellationRequested();
                     var requestTypeToFind = await GetTargetRequestTypeForUsage(textView, position);
                     if (requestTypeToFind == null)
                     {
@@ -174,7 +158,7 @@ namespace VSIXExtention.Services
                     
                     // Step 2: Get semantic model for the document
                     var document = _workspaceService.GetDocumentFromTextView(textView);
-                    var semanticModel = document != null ? await document.GetSemanticModelAsync() : null;
+                    var semanticModel = document != null ? await document.GetSemanticModelAsync(cancellationToken) : null;
 
                     progress.Report(0.4, "Verifying request type...");
                     // Step 3: Verify we have a valid request type
@@ -193,7 +177,8 @@ namespace VSIXExtention.Services
                     progress.Report(0.5, "Searching for usages...");
                     
                     // Step 4: Find all usages of this request type
-                    var usages = await _usageFinder.FindUsagesAsync(requestTypeToFind);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var usages = await _usageFinder.FindUsagesAsync(requestTypeToFind, cancellationToken);
                     
                     progress.Report(0.8, "Processing results...");
                     

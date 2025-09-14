@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Linq;
+using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Host;
 using Microsoft.VisualStudio.ComponentModelHost;
@@ -13,61 +14,105 @@ namespace VSIXExtention.Services
 {
     public class WorkspaceService : IWorkspaceService, IDisposable
     {
-        private VisualStudioWorkspace _cachedWorkspace;
+        private readonly Lazy<VisualStudioWorkspace> _lazyWorkspace;
+        private VisualStudioWorkspace _explicitWorkspace;
+        private readonly object _lockObject = new object();
 
-        public void InitializeWorkspace()
+        public WorkspaceService()
         {
-            var workspace = Package.GetGlobalService(typeof(VisualStudioWorkspace)) as VisualStudioWorkspace;
-
-            if (workspace != null)
+            // Lazy initialization as fallback - will be called on first access if not explicitly set
+            _lazyWorkspace = new Lazy<VisualStudioWorkspace>(() => 
             {
-                _cachedWorkspace = workspace;
-                return;
-            }
-
-            try
-            {
-                var compModel = (IComponentModel)Package.GetGlobalService(typeof(SComponentModel));
-
-                if (compModel != null)
+                try
                 {
-                    var vsWorkspace = compModel.GetService<VisualStudioWorkspace>();
-                    _cachedWorkspace = vsWorkspace;
+                    ThreadHelper.ThrowIfNotOnUIThread();
+                    
+                    var componentModel = ServiceProvider.GlobalProvider?.GetService(typeof(SComponentModel)) as IComponentModel;
+                    var workspace = componentModel?.GetService<VisualStudioWorkspace>();
+                    
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: WorkspaceService: Lazy-initialized workspace: {workspace != null}");
+                    return workspace;
                 }
-                else
+                catch (Exception ex)
                 {
-                    _cachedWorkspace = null;
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: WorkspaceService: Error during lazy workspace initialization: {ex.Message}");
+                    return null;
+                }
+            });
+        }
+
+        /// <summary>
+        /// Sets the workspace explicitly during package initialization (preferred method)
+        /// </summary>
+        public void SetWorkspace(VisualStudioWorkspace workspace)
+        {
+            lock (_lockObject)
+            {
+                _explicitWorkspace = workspace;
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: WorkspaceService: Explicitly set workspace: {workspace != null}");
+            }
+        }
+
+        /// <summary>
+        /// Gets the workspace, using explicit workspace if available, otherwise lazy initialization
+        /// </summary>
+        public VisualStudioWorkspace GetWorkspace()
+        {
+            lock (_lockObject)
+            {
+                // Prefer explicitly set workspace
+                if (_explicitWorkspace != null)
+                {
+                    return _explicitWorkspace;
                 }
             }
-            catch
+
+            // Fall back to lazy initialization if no explicit workspace was set
+            return _lazyWorkspace.Value;
+        }
+
+        /// <summary>
+        /// Async version that ensures UI thread access for workspace acquisition
+        /// </summary>
+        public async Task<VisualStudioWorkspace> GetWorkspaceAsync()
+        {
+            lock (_lockObject)
             {
-                _cachedWorkspace = null;
+                // Return immediately if we have an explicitly set workspace
+                if (_explicitWorkspace != null)
+                {
+                    return _explicitWorkspace;
+                }
             }
+
+            // Switch to UI thread for safe workspace acquisition
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            return GetWorkspace();
         }
 
         public void Dispose()
         {
-            // Nothing to dispose anymore
-        }
-
-        public VisualStudioWorkspace GetWorkspace()
-        {
-            return _cachedWorkspace;
+            lock (_lockObject)
+            {
+                _explicitWorkspace = null;
+            }
+            // Don't dispose the lazy workspace as it's owned by VS
         }
 
         public Document GetDocumentFromTextView(ITextView textView)
         {
-            if (_cachedWorkspace?.CurrentSolution == null)
+            var workspace = GetWorkspace();
+            if (workspace?.CurrentSolution == null)
                 return null;
 
             var filePath = GetFilePathFromTextView(textView);
             if (string.IsNullOrEmpty(filePath))
                 return null;
 
-            var documentIds = _cachedWorkspace.CurrentSolution.GetDocumentIdsWithFilePath(filePath);
+            var documentIds = workspace.CurrentSolution.GetDocumentIdsWithFilePath(filePath);
             var documentId = documentIds.FirstOrDefault();
 
-            return documentId != null ? _cachedWorkspace.CurrentSolution.GetDocument(documentId) : null;
+            return documentId != null ? workspace.CurrentSolution.GetDocument(documentId) : null;
         }
 
         public string GetFilePathFromTextView(ITextView textView)

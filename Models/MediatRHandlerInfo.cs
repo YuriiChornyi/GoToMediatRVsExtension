@@ -2,14 +2,31 @@
 
 namespace VSIXExtention.Models
 {
+    public enum MediatRHandlerType
+    {
+        RequestHandler,
+        NotificationHandler,
+        StreamRequestHandler,
+        RequestExceptionHandler,
+        RequestExceptionAction
+    }
+
     public class MediatRHandlerInfo
     {
         public string HandlerTypeName { get; set; }
         public string RequestTypeName { get; set; }
         public string ResponseTypeName { get; set; }
+        public INamedTypeSymbol RequestTypeSymbol { get; set; }
         public INamedTypeSymbol HandlerSymbol { get; set; }
         public Location Location { get; set; }
         public bool IsNotificationHandler { get; set; }
+        
+        // New properties for extended handler types
+        public MediatRHandlerType HandlerType { get; set; }
+        public string ExceptionTypeName { get; set; }
+        public INamedTypeSymbol ExceptionTypeSymbol { get; set; }
+        public bool IsStreamHandler { get; set; }
+        public bool IsExceptionHandler { get; set; }
 
         // Add equality comparison to prevent duplicates
         public override bool Equals(object obj)

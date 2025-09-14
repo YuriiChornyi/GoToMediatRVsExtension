@@ -41,6 +41,8 @@ This folder contains Visual Studio item templates for creating MediatR classes.
 - `$rootnamespace$`: The namespace of the current project
 - `$requestname$`: Custom parameter for specifying the request type name (in handlers)
 - `$notificationname$`: Custom parameter for specifying the notification type name (in notification handlers)
+- `$responsename$`: Custom parameter for specifying the response type name (in stream and exception handlers)
+- `$exceptionname$`: Custom parameter for specifying the exception type name (in exception handlers and actions)
 
 ## Complete MediatR Workflow
 

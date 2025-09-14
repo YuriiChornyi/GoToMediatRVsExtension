@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 using VSIXExtention.Models;
 
 namespace VSIXExtention.Services
@@ -24,9 +26,9 @@ namespace VSIXExtention.Services
         /// <summary>
         /// Finds all places where a specific request type is sent or published
         /// </summary>
-        public async Task<List<MediatRUsageInfo>> FindUsagesAsync(INamedTypeSymbol requestTypeSymbol)
+        public async Task<List<MediatRUsageInfo>> FindUsagesAsync(INamedTypeSymbol requestTypeSymbol, CancellationToken cancellationToken = default)
         {
-            var workspace = _workspaceService.GetWorkspace();
+            var workspace = await _workspaceService.GetWorkspaceAsync();
             if (workspace?.CurrentSolution == null)
                 return new List<MediatRUsageInfo>();
 
@@ -37,13 +39,30 @@ namespace VSIXExtention.Services
 
             // Process all projects in parallel
             var projectTasks = workspace.CurrentSolution.Projects
-                .Where(p => p.SupportsCompilation && p.HasDocuments)
+                .Where(p => p.SupportsCompilation && p.HasDocuments && p.Language == LanguageNames.CSharp)
                 .Select(async project =>
                 {
-                    var compilation = await project.GetCompilationAsync();
-                    return compilation != null ? 
-                        await FindUsagesInProject(compilation, requestTypeSymbol) : 
-                        new List<MediatRUsageInfo>();
+                    var compilation = await project.GetCompilationAsync(cancellationToken);
+                    if (compilation == null)
+                    {
+                        return new List<MediatRUsageInfo>();
+                    }
+
+                    // Scope: process only projects that reference MediatR
+                    var hasMediatR = compilation.GetTypeByMetadataName("MediatR.IRequest") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.INotification") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.IRequestHandler`2") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.IRequestHandler`1") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.INotificationHandler`1") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.IMediator") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.ISender") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.IPublisher") != null;
+                    if (!hasMediatR)
+                    {
+                        return new List<MediatRUsageInfo>();
+                    }
+
+                    return await FindUsagesInProject(compilation, requestTypeSymbol, cancellationToken);
                 });
 
             var projectResults = await Task.WhenAll(projectTasks);
@@ -57,7 +76,7 @@ namespace VSIXExtention.Services
             return usages;
         }
 
-        private async Task<List<MediatRUsageInfo>> FindUsagesInProject(Compilation compilation, INamedTypeSymbol requestTypeSymbol)
+        private async Task<List<MediatRUsageInfo>> FindUsagesInProject(Compilation compilation, INamedTypeSymbol requestTypeSymbol, CancellationToken cancellationToken)
         {
             var usages = new List<MediatRUsageInfo>();
             var requestTypeName = requestTypeSymbol.Name;
@@ -68,8 +87,9 @@ namespace VSIXExtention.Services
 
             foreach (var syntaxTree in relevantTrees)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var semanticModel = compilation.GetSemanticModel(syntaxTree);
-                var root = await syntaxTree.GetRootAsync();
+                var root = await syntaxTree.GetRootAsync(cancellationToken);
 
                 // Find all method invocations
                 var invocations = root.DescendantNodes().OfType<InvocationExpressionSyntax>();
@@ -209,16 +229,17 @@ namespace VSIXExtention.Services
                 if (invocation.ArgumentList?.Arguments.Count > 0)
                 {
                     var firstArgument = invocation.ArgumentList.Arguments[0];
-                    var argumentType = semanticModel.GetTypeInfo(firstArgument.Expression).Type as INamedTypeSymbol;
+                    // 1) Prefer IOperation-based analysis to unwrap conversions and variable references
+                    var op = semanticModel.GetOperation(firstArgument.Expression);
+                    var resolved = ResolveConcreteRequestTypeFromOperation(op, semanticModel);
+                    if (resolved != null && AreTypesEqual(resolved, requestTypeSymbol))
+                        return resolved;
 
-                    if (argumentType != null)
-                    {
-                        // Compare symbols by metadata identity instead of reference equality
-                        if (AreTypesEqual(argumentType, requestTypeSymbol))
-                        {
-                            return argumentType;
-                        }
-                    }
+                    // 2) Fallback to TypeInfo on the expression
+                    var typeInfo = semanticModel.GetTypeInfo(firstArgument.Expression);
+                    var argumentType = typeInfo.Type as INamedTypeSymbol ?? typeInfo.ConvertedType as INamedTypeSymbol;
+                    if (argumentType != null && AreTypesEqual(argumentType, requestTypeSymbol))
+                        return argumentType;
                 }
 
                 return null;
@@ -227,6 +248,68 @@ namespace VSIXExtention.Services
             {
                 return null;
             }
+        }
+
+        private INamedTypeSymbol ResolveConcreteRequestTypeFromOperation(IOperation operation, SemanticModel semanticModel)
+        {
+            if (operation == null) return null;
+
+            operation = UnwrapConversion(operation);
+
+            switch (operation)
+            {
+                case IObjectCreationOperation objectCreation:
+                    return objectCreation.Type as INamedTypeSymbol;
+
+                case ILocalReferenceOperation localRef:
+                    var local = localRef.Local;
+                    var declSyntax = local.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() as VariableDeclaratorSyntax;
+                    var initializerExpr = declSyntax?.Initializer?.Value;
+                    if (initializerExpr != null)
+                    {
+                        var initOp = semanticModel.GetOperation(initializerExpr);
+                        return ResolveConcreteRequestTypeFromOperation(initOp, semanticModel);
+                    }
+                    // fallback to local static type if it's already concrete
+                    return local.Type as INamedTypeSymbol;
+
+                case IFieldReferenceOperation fieldRef:
+                    var fieldDeclSyntax = fieldRef.Field.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() as VariableDeclaratorSyntax;
+                    var fieldInitExpr = fieldDeclSyntax?.Initializer?.Value;
+                    if (fieldInitExpr != null)
+                    {
+                        var fieldInitOp = semanticModel.GetOperation(fieldInitExpr);
+                        return ResolveConcreteRequestTypeFromOperation(fieldInitOp, semanticModel);
+                    }
+                    return fieldRef.Field.Type as INamedTypeSymbol;
+
+                case IPropertyReferenceOperation propRef:
+                    // Try to get initializer from auto-property if available
+                    var propDeclSyntax = propRef.Property.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() as PropertyDeclarationSyntax;
+                    var propInitExpr = propDeclSyntax?.Initializer?.Value;
+                    if (propInitExpr != null)
+                    {
+                        var propInitOp = semanticModel.GetOperation(propInitExpr);
+                        return ResolveConcreteRequestTypeFromOperation(propInitOp, semanticModel);
+                    }
+                    return propRef.Property.Type as INamedTypeSymbol;
+
+                case IParameterReferenceOperation paramRef:
+                    // No reliable way to get concrete construction at callsite from here; return parameter type
+                    return paramRef.Parameter.Type as INamedTypeSymbol;
+            }
+
+            return operation.Type as INamedTypeSymbol;
+        }
+
+        private IOperation UnwrapConversion(IOperation operation)
+        {
+            var current = operation;
+            while (current is IConversionOperation conv)
+            {
+                current = conv.Operand;
+            }
+            return current;
         }
 
         private bool AreTypesEqual(INamedTypeSymbol type1, INamedTypeSymbol type2)

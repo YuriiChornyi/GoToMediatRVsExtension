@@ -57,7 +57,7 @@ namespace VSIXExtention.Services
                     handlerNames[i] = handlers[i].DisplayText;
                 }
 
-                var dialog = new HandlerSelectionDialog(message, handlerNames);
+                var dialog = new HandlerSelectionDialog("Select MediatR Handler", message, handlerNames);
 
                 // Use ShowModal() for DialogWindow
                 var result = dialog.ShowModal();
@@ -87,7 +87,7 @@ namespace VSIXExtention.Services
                     usageNames[i] = usages[i].DisplayText;
                 }
 
-                var dialog = new HandlerSelectionDialog(message, usageNames);
+                var dialog = new HandlerSelectionDialog("Select Usage Location", message, usageNames);
 
                 // Use ShowModal() for DialogWindow
                 var result = dialog.ShowModal();
