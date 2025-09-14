@@ -1,4 +1,4 @@
-name: Publish to Visual Studio Marketplace
+name: Publish to Visual Studio Marketplace (VsixPublisher)
 
 on:
   release:
@@ -37,120 +37,189 @@ jobs:
     - name: Build for marketplace
       shell: powershell
       run: |
-        Write-Host "Building for marketplace publication..."
+        Write-Host "Building for marketplace publication..." -ForegroundColor Green
         msbuild VSIXExtention.sln /p:Configuration=Release /p:Platform="Any CPU" /p:DeployExtension=false /p:ZipPackageCompressionLevel=normal /v:minimal
         
-        # Find the generated VSIX file
-        $vsixFile = Get-ChildItem -Path "bin\Release" -Filter "*.vsix" -Recurse | Select-Object -First 1
+        # Find the generated VSIX file in the correct location
+        $vsixFile = Get-ChildItem -Path "." -Filter "*.vsix" -Recurse | Where-Object { $_.Directory.Name -eq "Release" } | Select-Object -First 1
         if ($vsixFile) {
             echo "VSIX_PATH=$($vsixFile.FullName)" >> $env:GITHUB_ENV
+            echo "VSIX_NAME=$($vsixFile.Name)" >> $env:GITHUB_ENV
             Write-Host "VSIX file ready: $($vsixFile.FullName)"
+            Write-Host "VSIX file size: $((Get-Item $vsixFile.FullName).Length) bytes"
         } else {
-            Write-Error "VSIX file not found!"
+            Write-Error "VSIX file not found in any Release directory!"
+            Write-Host "Searching for all .vsix files:"
+            Get-ChildItem -Path "." -Filter "*.vsix" -Recurse | ForEach-Object { Write-Host "Found: $($_.FullName)" }
             exit 1
         }
     
-    - name: Prepare for marketplace publication
-      shell: powershell
-      run: |
-        Write-Host "Preparing for Visual Studio Marketplace publication..."
-        Write-Host "Using direct REST API approach - no CLI tool installation needed"
-    
-    - name: Publish to Visual Studio Marketplace
+    - name: Publish to Visual Studio Marketplace using VsixPublisher.exe
       shell: powershell
       env:
         MARKETPLACE_PAT: ${{ secrets.MARKETPLACE_PAT }}
       run: |
-        Write-Host "Publishing to Visual Studio Marketplace..."
+        Write-Host "Publishing to Visual Studio Marketplace using VsixPublisher.exe..." -ForegroundColor Green
         
         if (-not $env:MARKETPLACE_PAT) {
             Write-Error "MARKETPLACE_PAT secret is not set!"
             exit 1
         }
         
-        # Get version from manifest
+        # Validate VSIX file exists
+        if (-not (Test-Path $env:VSIX_PATH)) {
+            Write-Error "VSIX file not found at path: $env:VSIX_PATH"
+            exit 1
+        }
+        
+        $vsixFileInfo = Get-Item $env:VSIX_PATH
+        Write-Host "VSIX file: $($vsixFileInfo.FullName) ($($vsixFileInfo.Length) bytes)"
+        
+        # Get extension info from manifest
         [xml]$manifest = Get-Content "source.extension.vsixmanifest"
         $version = $manifest.PackageManifest.Metadata.Identity.Version
         $displayName = $manifest.PackageManifest.Metadata.DisplayName
+        $publisherName = $manifest.PackageManifest.Metadata.Identity.Publisher
         
-        Write-Host "Publishing $displayName version $version"
-        Write-Host "VSIX Path: $env:VSIX_PATH"
+        Write-Host "Publishing: $displayName v$version"
+        Write-Host "Publisher: $publisherName"
         
         try {
-            # Using the Visual Studio Marketplace REST API
-            # The API requires multipart/form-data format for VSIX uploads
+            # Locate VsixPublisher.exe using vswhere
+            Write-Host "Locating VsixPublisher.exe..." -ForegroundColor Cyan
             
-            # Create boundary for multipart form data
-            $boundary = [System.Guid]::NewGuid().ToString()
-            $LF = "`r`n"
-            
-            # Read VSIX file content
-            $vsixBytes = [System.IO.File]::ReadAllBytes($env:VSIX_PATH)
-            $vsixFileName = [System.IO.Path]::GetFileName($env:VSIX_PATH)
-            
-            # Create multipart form data body
-            $bodyStart = "--$boundary$LF" +
-                         "Content-Disposition: form-data; name=`"upload`"; filename=`"$vsixFileName`"$LF" +
-                         "Content-Type: application/octet-stream$LF$LF"
-            $bodyEnd = "$LF--$boundary--$LF"
-            
-            # Convert strings to bytes
-            $bodyStartBytes = [System.Text.Encoding]::UTF8.GetBytes($bodyStart)
-            $bodyEndBytes = [System.Text.Encoding]::UTF8.GetBytes($bodyEnd)
-            
-            # Combine all bytes
-            $bodyBytes = $bodyStartBytes + $vsixBytes + $bodyEndBytes
-            
-            # Prepare headers
-            $headers = @{
-                'Authorization' = "Basic $([Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(":$env:MARKETPLACE_PAT")))"
-                'Content-Type' = "multipart/form-data; boundary=$boundary"
-                'Accept' = 'application/json'
+            # First, find Visual Studio installation path
+            $vsWherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+            if (-not (Test-Path $vsWherePath)) {
+                Write-Error "vswhere.exe not found at: $vsWherePath"
+                exit 1
             }
             
-            $publishUrl = "https://marketplace.visualstudio.com/_apis/gallery/extensions?api-version=7.1-preview.1"
+            # Find VS installation with VSSDK
+            $vsInstallPath = & $vsWherePath -latest -products * -requires Microsoft.VisualStudio.Component.VSSDK -property installationPath
+            if (-not $vsInstallPath) {
+                Write-Host "Visual Studio with VSSDK not found. Trying alternative approach..." -ForegroundColor Yellow
+                # Try to find any VS installation
+                $vsInstallPath = & $vsWherePath -latest -products * -property installationPath
+                if (-not $vsInstallPath) {
+                    Write-Error "No Visual Studio installation found!"
+                    exit 1
+                }
+            }
             
-            Write-Host "Uploading VSIX to marketplace using multipart form data..."
-            Write-Host "File size: $($vsixBytes.Length) bytes"
-            Write-Host "API URL: $publishUrl"
+            Write-Host "Visual Studio installation: $vsInstallPath"
             
-            $response = Invoke-RestMethod -Uri $publishUrl -Method Post -Body $bodyBytes -Headers $headers
+            # Look for VsixPublisher.exe in common locations
+            $vsixPublisherPaths = @(
+                "$vsInstallPath\VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe",
+                "$vsInstallPath\Common7\IDE\Extensions\Microsoft\VSSDK\VsixPublisher.exe",
+                "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe",
+                "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe",
+                "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe",
+                "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe"
+            )
             
-            Write-Host "Successfully published to Visual Studio Marketplace!"
-            Write-Host "Extension ID: $($response.extensionId)"
-            Write-Host "Publisher: $($response.publisher.publisherName)"
-            Write-Host "Version: $($response.versions[0].version)"
+            $vsixPublisherPath = $null
+            foreach ($path in $vsixPublisherPaths) {
+                if (Test-Path $path) {
+                    $vsixPublisherPath = $path
+                    break
+                }
+            }
+            
+            if (-not $vsixPublisherPath) {
+                Write-Host "Searching for VsixPublisher.exe recursively..." -ForegroundColor Yellow
+                $vsixPublisherPath = Get-ChildItem -Path $vsInstallPath -Name "VsixPublisher.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($vsixPublisherPath) {
+                    $vsixPublisherPath = Join-Path $vsInstallPath $vsixPublisherPath
+                }
+            }
+            
+            if (-not $vsixPublisherPath -or -not (Test-Path $vsixPublisherPath)) {
+                Write-Error "VsixPublisher.exe not found in Visual Studio installation!"
+                Write-Host "Searched paths:" -ForegroundColor Yellow
+                $vsixPublisherPaths | ForEach-Object { Write-Host "  - $_" }
+                exit 1
+            }
+            
+            Write-Host "Found VsixPublisher.exe: $vsixPublisherPath" -ForegroundColor Green
+            
+            # Publish using VsixPublisher.exe
+            Write-Host "Publishing extension..." -ForegroundColor Cyan
+            
+            $publishArgs = @(
+                "publish"
+                "-payload", "`"$($env:VSIX_PATH)`""
+                "-publishManifest", "`"$($env:VSIX_PATH)`""
+                "-personalAccessToken", $env:MARKETPLACE_PAT
+                "-ignoreWarnings", "VSIXValidatorWarning01,VSIXValidatorWarning02"
+            )
+            
+            Write-Host "Command: `"$vsixPublisherPath`" $($publishArgs -join ' ')"
+            
+            $process = Start-Process -FilePath $vsixPublisherPath -ArgumentList $publishArgs -Wait -NoNewWindow -PassThru -RedirectStandardOutput "publish-output.txt" -RedirectStandardError "publish-error.txt"
+            
+            # Read output files
+            if (Test-Path "publish-output.txt") {
+                $output = Get-Content "publish-output.txt" -Raw
+                if ($output) {
+                    Write-Host "Output:" -ForegroundColor Cyan
+                    Write-Host $output
+                }
+            }
+            
+            if (Test-Path "publish-error.txt") {
+                $errorOutput = Get-Content "publish-error.txt" -Raw
+                if ($errorOutput) {
+                    Write-Host "Error Output:" -ForegroundColor Yellow
+                    Write-Host $errorOutput
+                }
+            }
+            
+            if ($process.ExitCode -eq 0) {
+                Write-Host "✅ Successfully published to Visual Studio Marketplace!" -ForegroundColor Green
+                Write-Host "Extension: $displayName v$version" -ForegroundColor Green
+            } else {
+                Write-Error "❌ VsixPublisher.exe failed with exit code: $($process.ExitCode)"
+                exit 1
+            }
             
         } catch {
-            Write-Error "Failed to publish to marketplace: $($_.Exception.Message)"
-            
-            # Try to get more detailed error information
-            if ($_.Exception.Response) {
-                $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
-                $responseBody = $reader.ReadToEnd()
-                $reader.Close()
-                Write-Host "Response Status: $($_.Exception.Response.StatusCode)"
-                Write-Host "Response Body: $responseBody"
-            }
-            
-            # Additional debugging information
-            Write-Host "Request URL: $publishUrl"
-            Write-Host "VSIX file exists: $(Test-Path $env:VSIX_PATH)"
-            Write-Host "VSIX file size: $((Get-Item $env:VSIX_PATH).Length) bytes"
-            
+            Write-Error "Failed to publish extension: $($_.Exception.Message)"
+            Write-Host $_.ScriptStackTrace -ForegroundColor Red
             exit 1
+        } finally {
+            # Clean up output files
+            Remove-Item "publish-output.txt" -ErrorAction SilentlyContinue
+            Remove-Item "publish-error.txt" -ErrorAction SilentlyContinue
         }
     
-    - name: Update marketplace listing (optional)
+    - name: Attach VSIX to GitHub Release
+      if: success() && github.event_name == 'release'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ${{ env.VSIX_PATH }}
+        asset_name: ${{ env.VSIX_NAME }}
+        asset_content_type: application/zip
+    
+    - name: Upload VSIX as workflow artifact
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: vsix-package-${{ github.run_number }}
+        path: ${{ env.VSIX_PATH }}
+        retention-days: 30
+    
+    - name: Marketplace publication completed
       if: success()
       shell: powershell
-      env:
-        MARKETPLACE_PAT: ${{ secrets.MARKETPLACE_PAT }}
       run: |
-        Write-Host "Marketplace publication completed successfully!"
+        Write-Host "🎉 Marketplace publication completed successfully!" -ForegroundColor Green
+        Write-Host "Your extension is now available on the Visual Studio Marketplace!" -ForegroundColor Cyan
         
-        # You can add additional steps here to:
-        # - Update the marketplace description
-        # - Add release notes
-        # - Update screenshots
-        # - etc.
+        if ($env:GITHUB_EVENT_NAME -eq "release") {
+            Write-Host "VSIX file has been attached to the GitHub release!" -ForegroundColor Green
+        }
