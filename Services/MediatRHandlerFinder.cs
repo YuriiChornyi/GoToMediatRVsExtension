@@ -21,10 +21,13 @@ namespace VSIXExtention.Services
         {
             try
             {
-                var workspace = _workspaceService.GetWorkspace();
+                var workspace = await _workspaceService.GetWorkspaceAsync();
                 
                 if (workspace?.CurrentSolution == null)
+                {
+                    System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: MediatRHandlerFinder: Workspace or CurrentSolution is null");
                     return new List<MediatRHandlerInfo>();
+                }
 
                 // Use the method that finds all handlers (both request and notification)
                 var allHandlers = await MediatRPatternMatcher.FindAllHandlersForTypeSymbol(workspace.CurrentSolution, requestTypeSymbol, semanticModel, cancellationToken);

@@ -28,7 +28,7 @@ namespace VSIXExtention.Services
         /// </summary>
         public async Task<List<MediatRUsageInfo>> FindUsagesAsync(INamedTypeSymbol requestTypeSymbol, CancellationToken cancellationToken = default)
         {
-            var workspace = _workspaceService.GetWorkspace();
+            var workspace = await _workspaceService.GetWorkspaceAsync();
             if (workspace?.CurrentSolution == null)
                 return new List<MediatRUsageInfo>();
 

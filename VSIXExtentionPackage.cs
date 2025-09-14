@@ -46,16 +46,35 @@ namespace VSIXExtention
         {
             System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: Starting initialization...");
 
-            // Acquire services asynchronously without switching to UI thread yet
-            var componentModel = await GetServiceAsync(typeof(SComponentModel)) as IComponentModel;
-            var vsWorkspace = componentModel?.GetService<Microsoft.VisualStudio.LanguageServices.VisualStudioWorkspace>();
-            _workspaceService.SetWorkspace(vsWorkspace);
-
-            // Switch to UI thread only for UI-bound operations (menu registration)
+            // Switch to UI thread early to ensure thread-safe service acquisition
             await this.JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
 
+            try
+            {
+                // Acquire services on UI thread for maximum compatibility
+                var componentModel = await GetServiceAsync(typeof(SComponentModel)) as IComponentModel;
+                if (componentModel != null)
+                {
+                    var vsWorkspace = componentModel.GetService<Microsoft.VisualStudio.LanguageServices.VisualStudioWorkspace>();
+                    _workspaceService.SetWorkspace(vsWorkspace);
+                    
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Package: Workspace acquired: {vsWorkspace != null}");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: WARNING - ComponentModel not available, workspace will use lazy initialization");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Package: Error during workspace initialization: {ex.Message}");
+                // Continue initialization - WorkspaceService will fall back to lazy initialization
+            }
+
+            // Register commands
             await RegisterCommandsAsync();
 
+            // Call base initialization
             await base.InitializeAsync(cancellationToken, progress);
 
             System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: Initialization complete");
