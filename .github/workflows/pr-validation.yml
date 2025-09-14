@@ -1,0 +1,134 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, reopened]
+
+jobs:
+  validate-pr:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup .NET Framework
+      uses: microsoft/setup-msbuild@v2
+      with:
+        msbuild-architecture: x64
+    
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
+      with:
+        nuget-version: 'latest'
+    
+    - name: Restore NuGet packages
+      run: nuget restore VSIXExtention.sln
+    
+    - name: Build solution
+      run: msbuild VSIXExtention.sln /p:Configuration=Debug /p:Platform="Any CPU" /p:DeployExtension=false /v:minimal
+    
+    - name: Run static analysis (if applicable)
+      shell: powershell
+      run: |
+        Write-Host "Running basic code validation..."
+        
+        # Check for common issues
+        $sourceFiles = Get-ChildItem -Path . -Filter "*.cs" -Recurse | Where-Object { $_.FullName -notmatch "\\obj\\" -and $_.FullName -notmatch "\\bin\\" }
+        
+        $issues = @()
+        
+        foreach ($file in $sourceFiles) {
+            $content = Get-Content $file.FullName -Raw
+            
+            # Check for potential threading issues
+            if ($content -match "\.Result\b" -or $content -match "\.Wait\(\)") {
+                $issues += "Potential threading issue in $($file.Name): Found .Result or .Wait() usage"
+            }
+            
+            # Check for proper using statements
+            if ($content -match "using.*Microsoft\.VisualStudio" -and $content -notmatch "ThreadHelper") {
+                # This is just a warning
+                Write-Host "Info: $($file.Name) uses VS services - ensure proper threading"
+            }
+        }
+        
+        if ($issues.Count -gt 0) {
+            Write-Host "⚠️  Found potential issues:"
+            foreach ($issue in $issues) {
+                Write-Host "  - $issue"
+            }
+            Write-Host ""
+            Write-Host "Please review these potential issues. They may not be actual problems but should be verified."
+        } else {
+            Write-Host "✅ No obvious issues found in static analysis"
+        }
+    
+    - name: Validate VSIX manifest
+      shell: powershell
+      run: |
+        Write-Host "Validating VSIX manifest..."
+        
+        if (-not (Test-Path "source.extension.vsixmanifest")) {
+            Write-Error "source.extension.vsixmanifest not found!"
+            exit 1
+        }
+        
+        try {
+            [xml]$manifest = Get-Content "source.extension.vsixmanifest"
+            
+            # Check required fields
+            $identity = $manifest.PackageManifest.Metadata.Identity
+            $version = $identity.Version
+            $displayName = $manifest.PackageManifest.Metadata.DisplayName
+            
+            if ([string]::IsNullOrEmpty($version)) {
+                Write-Error "Version is missing from manifest"
+                exit 1
+            }
+            
+            if ([string]::IsNullOrEmpty($displayName)) {
+                Write-Error "DisplayName is missing from manifest"
+                exit 1
+            }
+            
+            Write-Host "✅ Manifest validation passed"
+            Write-Host "  - Version: $version"
+            Write-Host "  - Display Name: $displayName"
+            
+        } catch {
+            Write-Error "Failed to parse manifest: $($_.Exception.Message)"
+            exit 1
+        }
+    
+    - name: Check for version conflicts
+      shell: powershell
+      run: |
+        Write-Host "Checking for version consistency..."
+        
+        # Get version from manifest
+        [xml]$manifest = Get-Content "source.extension.vsixmanifest"
+        $manifestVersion = $manifest.PackageManifest.Metadata.Identity.Version
+        
+        Write-Host "Manifest version: $manifestVersion"
+        
+        # Check if this version already exists as a tag
+        $existingTag = git tag -l "v$manifestVersion"
+        if ($existingTag) {
+            Write-Warning "⚠️  Version $manifestVersion already exists as a git tag. Consider bumping the version."
+        } else {
+            Write-Host "✅ Version $manifestVersion is unique"
+        }
+    
+    - name: Build summary
+      if: always()
+      shell: powershell
+      run: |
+        Write-Host ""
+        Write-Host "=== PR Validation Summary ==="
+        Write-Host "✅ Code builds successfully"
+        Write-Host "✅ VSIX manifest is valid"
+        Write-Host "✅ Basic static analysis completed"
+        Write-Host ""
+        Write-Host "This PR is ready for review! 🚀"

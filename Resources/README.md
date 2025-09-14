@@ -39,8 +39,7 @@ Jump instantly between MediatR requests/notifications and their handlers, and fr
 - Your project references MediatR
 
 ### Installation
-- Marketplace: coming soon (Manage Extensions → search “MediatR Navigation Extension”).
-- Manual: build the solution, double‑click the generated .vsix, restart VS.
+- Marketplace
 
 ### Notes
 - If a command doesn’t appear, ensure you’re in a C# file and the caret is on a relevant symbol, the solution builds, and MediatR is referenced.
