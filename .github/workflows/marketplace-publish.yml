@@ -1,0 +1,117 @@
+name: Publish to Visual Studio Marketplace
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to publish (e.g., v1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  publish-to-marketplace:
+    runs-on: windows-latest
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.release_tag || github.ref }}
+    
+    - name: Setup .NET Framework
+      uses: microsoft/setup-msbuild@v2
+      with:
+        msbuild-architecture: x64
+    
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
+      with:
+        nuget-version: 'latest'
+    
+    - name: Restore NuGet packages
+      run: nuget restore VSIXExtention.sln
+    
+    - name: Build for marketplace
+      shell: powershell
+      run: |
+        Write-Host "Building for marketplace publication..."
+        msbuild VSIXExtention.sln /p:Configuration=Release /p:Platform="Any CPU" /p:DeployExtension=false /p:ZipPackageCompressionLevel=normal /v:minimal
+        
+        # Find the generated VSIX file
+        $vsixFile = Get-ChildItem -Path "bin\Release" -Filter "*.vsix" -Recurse | Select-Object -First 1
+        if ($vsixFile) {
+            echo "VSIX_PATH=$($vsixFile.FullName)" >> $env:GITHUB_ENV
+            Write-Host "VSIX file ready: $($vsixFile.FullName)"
+        } else {
+            Write-Error "VSIX file not found!"
+            exit 1
+        }
+    
+    - name: Install Visual Studio Marketplace CLI
+      shell: powershell
+      run: |
+        Write-Host "Installing Visual Studio Marketplace tools..."
+        # Install the Visual Studio Marketplace CLI tool
+        dotnet tool install --global Microsoft.VisualStudio.Services.CLI --version 0.1.0-preview
+    
+    - name: Publish to Visual Studio Marketplace
+      shell: powershell
+      env:
+        MARKETPLACE_PAT: ${{ secrets.MARKETPLACE_PAT }}
+      run: |
+        Write-Host "Publishing to Visual Studio Marketplace..."
+        
+        if (-not $env:MARKETPLACE_PAT) {
+            Write-Error "MARKETPLACE_PAT secret is not set!"
+            exit 1
+        }
+        
+        # Get version from manifest
+        [xml]$manifest = Get-Content "source.extension.vsixmanifest"
+        $version = $manifest.PackageManifest.Metadata.Identity.Version
+        $displayName = $manifest.PackageManifest.Metadata.DisplayName
+        
+        Write-Host "Publishing $displayName version $version"
+        Write-Host "VSIX Path: $env:VSIX_PATH"
+        
+        try {
+            # Using the Visual Studio Marketplace API
+            # Note: You may need to adjust this based on the actual CLI tool available
+            
+            # Alternative approach using PowerShell and REST API
+            $headers = @{
+                'Authorization' = "Basic $([Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(":$env:MARKETPLACE_PAT")))"
+                'Content-Type' = 'application/octet-stream'
+            }
+            
+            $vsixBytes = [System.IO.File]::ReadAllBytes($env:VSIX_PATH)
+            $publishUrl = "https://marketplace.visualstudio.com/_apis/gallery/extensions"
+            
+            Write-Host "Uploading VSIX to marketplace..."
+            $response = Invoke-RestMethod -Uri $publishUrl -Method Post -Body $vsixBytes -Headers $headers
+            
+            Write-Host "Successfully published to Visual Studio Marketplace!"
+            Write-Host "Response: $($response | ConvertTo-Json -Depth 2)"
+            
+        } catch {
+            Write-Error "Failed to publish to marketplace: $($_.Exception.Message)"
+            Write-Host "Response content: $($_.Exception.Response | ConvertTo-Json -Depth 2)"
+            exit 1
+        }
+    
+    - name: Update marketplace listing (optional)
+      if: success()
+      shell: powershell
+      env:
+        MARKETPLACE_PAT: ${{ secrets.MARKETPLACE_PAT }}
+      run: |
+        Write-Host "Marketplace publication completed successfully!"
+        
+        # You can add additional steps here to:
+        # - Update the marketplace description
+        # - Add release notes
+        # - Update screenshots
+        # - etc.

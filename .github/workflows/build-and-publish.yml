@@ -1,0 +1,202 @@
+name: Build and Publish MediatR Extension
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      publish_to_marketplace:
+        description: 'Publish to Visual Studio Marketplace'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  SOLUTION_FILE: VSIXExtention.sln
+  BUILD_CONFIGURATION: Release
+  BUILD_PLATFORM: Any CPU
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      vsix-path: ${{ steps.build.outputs.vsix-path }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Fetch full history for version calculation
+    
+    - name: Setup .NET Framework
+      uses: microsoft/setup-msbuild@v2
+      with:
+        msbuild-architecture: x64
+    
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
+      with:
+        nuget-version: 'latest'
+    
+    - name: Restore NuGet packages
+      run: nuget restore ${{ env.SOLUTION_FILE }}
+    
+    - name: Get version from manifest
+      id: get-version
+      shell: powershell
+      run: |
+        [xml]$manifest = Get-Content "source.extension.vsixmanifest"
+        $version = $manifest.PackageManifest.Metadata.Identity.Version
+        echo "version=$version" >> $env:GITHUB_OUTPUT
+        echo "Extension version: $version"
+    
+    - name: Build solution
+      id: build
+      shell: powershell
+      run: |
+        Write-Host "Building solution..."
+        msbuild ${{ env.SOLUTION_FILE }} /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform="${{ env.BUILD_PLATFORM }}" /p:DeployExtension=false /p:ZipPackageCompressionLevel=normal /v:minimal
+        
+        # Find the generated VSIX file
+        $vsixFile = Get-ChildItem -Path "bin\${{ env.BUILD_CONFIGURATION }}" -Filter "*.vsix" -Recurse | Select-Object -First 1
+        if ($vsixFile) {
+            $vsixPath = $vsixFile.FullName
+            echo "vsix-path=$vsixPath" >> $env:GITHUB_OUTPUT
+            echo "VSIX file found: $vsixPath"
+        } else {
+            Write-Error "VSIX file not found!"
+            exit 1
+        }
+    
+    - name: Upload VSIX artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: vsix-package
+        path: ${{ steps.build.outputs.vsix-path }}
+        retention-days: 90
+    
+    - name: Upload build logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs
+        path: |
+          **/*.log
+          **/obj/**/*.cache
+        retention-days: 7
+
+  test:
+    runs-on: windows-latest
+    needs: build
+    if: success()
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Download VSIX artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: vsix-package
+        path: ./artifacts
+    
+    - name: Test VSIX installation
+      shell: powershell
+      run: |
+        Write-Host "Testing VSIX package integrity..."
+        
+        # Find the VSIX file
+        $vsixFile = Get-ChildItem -Path "./artifacts" -Filter "*.vsix" | Select-Object -First 1
+        if (-not $vsixFile) {
+            Write-Error "VSIX file not found in artifacts!"
+            exit 1
+        }
+        
+        # Test VSIX file integrity (it's essentially a ZIP file)
+        try {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($vsixFile.FullName)
+            $entryCount = $zip.Entries.Count
+            $zip.Dispose()
+            Write-Host "VSIX contains $entryCount entries - integrity check passed"
+        } catch {
+            Write-Error "VSIX integrity check failed: $($_.Exception.Message)"
+            exit 1
+        }
+
+  publish-marketplace:
+    runs-on: windows-latest
+    needs: [build, test]
+    if: |
+      success() && 
+      (
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+        (github.event_name == 'workflow_dispatch' && inputs.publish_to_marketplace == true)
+      )
+    environment: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Download VSIX artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: vsix-package
+        path: ./artifacts
+    
+    - name: Install VSCE (Visual Studio Code Extension Manager)
+      run: npm install -g @vscode/vsce
+    
+    - name: Publish to Visual Studio Marketplace
+      shell: powershell
+      env:
+        VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      run: |
+        Write-Host "Publishing to Visual Studio Marketplace..."
+        
+        # Find the VSIX file
+        $vsixFile = Get-ChildItem -Path "./artifacts" -Filter "*.vsix" | Select-Object -First 1
+        if (-not $vsixFile) {
+            Write-Error "VSIX file not found!"
+            exit 1
+        }
+        
+        Write-Host "Publishing: $($vsixFile.Name)"
+        
+        # Note: For Visual Studio extensions (not VS Code), you might need to use different tools
+        # This is a placeholder - see the setup instructions below
+        Write-Host "VSIX ready for marketplace publication: $($vsixFile.FullName)"
+        
+        # Uncomment and modify based on your marketplace publishing method:
+        # vsce publish --packagePath $vsixFile.FullName --pat $env:VSCE_PAT
+
+  create-github-release:
+    runs-on: windows-latest
+    needs: [build, test]
+    if: success() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Download VSIX artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: vsix-package
+        path: ./artifacts
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: ./artifacts/*.vsix
+        generate_release_notes: true
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

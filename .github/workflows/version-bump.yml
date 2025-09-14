@@ -1,0 +1,184 @@
+name: Version Bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+        - patch
+        - minor
+        - major
+      custom_version:
+        description: 'Custom version (optional, overrides version_type)'
+        required: false
+        type: string
+
+jobs:
+  bump-version:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+    
+    - name: Configure Git
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+    
+    - name: Get current version and calculate new version
+      id: version
+      shell: powershell
+      run: |
+        # Read current version from manifest
+        [xml]$manifest = Get-Content "source.extension.vsixmanifest"
+        $currentVersion = $manifest.PackageManifest.Metadata.Identity.Version
+        Write-Host "Current version: $currentVersion"
+        
+        if ("${{ inputs.custom_version }}" -ne "") {
+            $newVersion = "${{ inputs.custom_version }}"
+            Write-Host "Using custom version: $newVersion"
+        } else {
+            # Parse version
+            $versionParts = $currentVersion.Split('.')
+            $major = [int]$versionParts[0]
+            $minor = [int]$versionParts[1]
+            $patch = if ($versionParts.Length -gt 2) { [int]$versionParts[2] } else { 0 }
+            
+            # Bump version based on type
+            switch ("${{ inputs.version_type }}") {
+                "major" {
+                    $major++
+                    $minor = 0
+                    $patch = 0
+                }
+                "minor" {
+                    $minor++
+                    $patch = 0
+                }
+                "patch" {
+                    $patch++
+                }
+            }
+            
+            $newVersion = "$major.$minor.$patch"
+            Write-Host "Calculated new version: $newVersion"
+        }
+        
+        echo "current-version=$currentVersion" >> $env:GITHUB_OUTPUT
+        echo "new-version=$newVersion" >> $env:GITHUB_OUTPUT
+    
+    - name: Update version in manifest
+      shell: powershell
+      run: |
+        $newVersion = "${{ steps.version.outputs.new-version }}"
+        Write-Host "Updating manifest to version: $newVersion"
+        
+        # Update source.extension.vsixmanifest
+        [xml]$manifest = Get-Content "source.extension.vsixmanifest"
+        $manifest.PackageManifest.Metadata.Identity.Version = $newVersion
+        $manifest.Save("source.extension.vsixmanifest")
+        
+        Write-Host "Manifest updated successfully"
+    
+    - name: Update AssemblyInfo (if exists)
+      shell: powershell
+      run: |
+        $newVersion = "${{ steps.version.outputs.new-version }}"
+        $assemblyInfoPath = "Properties\AssemblyInfo.cs"
+        
+        if (Test-Path $assemblyInfoPath) {
+            Write-Host "Updating AssemblyInfo.cs..."
+            
+            $content = Get-Content $assemblyInfoPath
+            $content = $content -replace '\[assembly: AssemblyVersion\(".*?"\)\]', "[assembly: AssemblyVersion(`"$newVersion.0`")]"
+            $content = $content -replace '\[assembly: AssemblyFileVersion\(".*?"\)\]', "[assembly: AssemblyFileVersion(`"$newVersion.0`")]"
+            
+            $content | Set-Content $assemblyInfoPath
+            Write-Host "AssemblyInfo.cs updated"
+        } else {
+            Write-Host "AssemblyInfo.cs not found, skipping"
+        }
+    
+    - name: Commit version changes
+      run: |
+        git add source.extension.vsixmanifest Properties/AssemblyInfo.cs
+        git commit -m "Bump version to ${{ steps.version.outputs.new-version }}" || exit 0
+        git push origin HEAD
+    
+    - name: Create and push tag
+      run: |
+        $newVersion = "${{ steps.version.outputs.new-version }}"
+        $tagName = "v$newVersion"
+        
+        Write-Host "Creating tag: $tagName"
+        git tag $tagName
+        git push origin $tagName
+        
+        echo "TAG_NAME=$tagName" >> $env:GITHUB_ENV
+      shell: powershell
+    
+    - name: Create release notes
+      id: release-notes
+      shell: powershell
+      run: |
+        $newVersion = "${{ steps.version.outputs.new-version }}"
+        $currentVersion = "${{ steps.version.outputs.current-version }}"
+        
+        $releaseNotes = @"
+        # MediatR Navigation Extension v$newVersion
+        
+        ## Changes from v$currentVersion to v$newVersion
+        
+        ### New Features
+        - Enhanced MediatR pattern support
+        - Improved navigation experience
+        - Better error handling and diagnostics
+        
+        ### Bug Fixes
+        - Various stability improvements
+        - Performance optimizations
+        
+        ### Technical Improvements
+        - Updated dependencies
+        - Code quality improvements
+        
+        ## Installation
+        
+        1. Download the `.vsix` file from the assets below
+        2. In Visual Studio, go to Extensions → Manage Extensions
+        3. Click "Install from VSIX" and select the downloaded file
+        4. Restart Visual Studio
+        
+        ## Requirements
+        - Visual Studio 2022-2026 (17.0-18.x)
+        - .NET Framework 4.7.2+
+        - MediatR package in your project
+        
+        "@
+        
+        # Save to file for the release
+        $releaseNotes | Out-File -FilePath "release-notes.md" -Encoding UTF8
+        
+        # Also output for GitHub (escape newlines)
+        $escapedNotes = $releaseNotes -replace "`r`n", "%0A" -replace "`n", "%0A"
+        echo "notes=$escapedNotes" >> $env:GITHUB_OUTPUT
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ env.TAG_NAME }}
+        name: "MediatR Navigation Extension v${{ steps.version.outputs.new-version }}"
+        body_path: release-notes.md
+        draft: true
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
