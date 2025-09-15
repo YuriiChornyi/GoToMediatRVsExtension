@@ -1,37 +1,37 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
-    <Metadata>
-        <Identity Id="MediatRNavigationExtension.38878949-742f-44c0-aec9-643fa3fbb5bc" Version="6.4" Language="en-US" Publisher="Yurii Chornyi" />
-        <DisplayName>MediatR Navigation Extension</DisplayName>
-        <Description xml:space="preserve">Navigate from MediatR requests, commands, queries, and notifications to their corresponding handlers (including stream, exception handlers, and exception actions) with "Go to MediatR Implementation" command. Also includes item templates for creating MediatR commands, handlers, notifications, stream handlers, exception handlers, and exception actions.</Description>
-        <License>LICENSE.txt</License>
-        <Icon>Resources\icon_90_90.png</Icon>
-        <PreviewImage>Resources\icon_90_90.png</PreviewImage>
-        <Tags>MediatR, CQRS, Navigation, Roslyn, CodeAnalysis, Templates</Tags>
-    </Metadata>
-    <Installation>
-        <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0, 19.0)">
-            <ProductArchitecture>amd64</ProductArchitecture>
-        </InstallationTarget>
-        <InstallationTarget Id="Microsoft.VisualStudio.Pro" Version="[17.0, 19.0)">
-            <ProductArchitecture>amd64</ProductArchitecture>
-        </InstallationTarget>
-        <InstallationTarget Id="Microsoft.VisualStudio.Enterprise" Version="[17.0, 19.0)">
-            <ProductArchitecture>amd64</ProductArchitecture>
-        </InstallationTarget>
-    </Installation>
-    <Dependencies>
-        <Dependency Id="Microsoft.Framework.NDP" DisplayName="Microsoft .NET Framework" d:Source="Manual" Version="[4.7.2,)" />
-    </Dependencies>
-    <Prerequisites>
-        <Prerequisite Id="Microsoft.VisualStudio.Component.CoreEditor" Version="[17.0,19.0)" DisplayName="Visual Studio core editor" />
-        <Prerequisite Id="Microsoft.VisualStudio.Component.Roslyn.Compiler" Version="[17.0,19.0)" DisplayName="C# and Visual Basic Roslyn compilers" />
-    </Prerequisites>
-    <Assets>
-        <Asset Type="Microsoft.VisualStudio.VsPackage" d:Source="Project" d:ProjectName="%CurrentProject%" Path="|%CurrentProject%;PkgdefProjectOutputGroup|" />
-        <Asset Type="Microsoft.VisualStudio.ItemTemplate" d:Source="File" Path="ItemTemplates" d:TargetPath="ItemTemplates\CSharp\1033\MediatRCommand.zip" />
-        <Asset Type="Microsoft.VisualStudio.ItemTemplate" d:Source="File" Path="ItemTemplates" d:TargetPath="ItemTemplates\CSharp\1033\MediatRHandler.zip" />
-        <Asset Type="Microsoft.VisualStudio.ItemTemplate" d:Source="File" Path="ItemTemplates" d:TargetPath="ItemTemplates\CSharp\1033\MediatRNotification.zip" />
-        <Asset Type="Microsoft.VisualStudio.ItemTemplate" d:Source="File" Path="ItemTemplates" d:TargetPath="ItemTemplates\CSharp\1033\MediatRNotificationHandler.zip" />
-    </Assets>
+  <Metadata>
+    <Identity Id="MediatRNavigationExtension.38878949-742f-44c0-aec9-643fa3fbb5bc" Version="6.4" Language="en-US" Publisher="Yurii Chornyi" />
+    <DisplayName>MediatR Navigation Extension</DisplayName>
+    <Description xml:space="preserve">Navigate from MediatR requests, commands, queries, and notifications to their corresponding handlers (including stream, exception handlers, and exception actions) with "Go to MediatR Implementation" command. Also includes item templates for creating MediatR commands, handlers, notifications, stream handlers, exception handlers, and exception actions.</Description>
+    <License>LICENSE.txt</License>
+    <Icon>Resources\icon_90_90.png</Icon>
+    <PreviewImage>Resources\icon_90_90.png</PreviewImage>
+    <Tags>MediatR, CQRS, Navigation, Roslyn, CodeAnalysis, Templates</Tags>
+  </Metadata>
+  <Installation>
+    <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0, 19.0)">
+      <ProductArchitecture>amd64</ProductArchitecture>
+    </InstallationTarget>
+    <InstallationTarget Id="Microsoft.VisualStudio.Pro" Version="[17.0, 19.0)">
+      <ProductArchitecture>amd64</ProductArchitecture>
+    </InstallationTarget>
+    <InstallationTarget Id="Microsoft.VisualStudio.Enterprise" Version="[17.0, 19.0)">
+      <ProductArchitecture>amd64</ProductArchitecture>
+    </InstallationTarget>
+  </Installation>
+  <Dependencies>
+    <Dependency Id="Microsoft.Framework.NDP" DisplayName="Microsoft .NET Framework" d:Source="Manual" Version="[4.7.2,)" />
+  </Dependencies>
+  <Prerequisites>
+    <Prerequisite Id="Microsoft.VisualStudio.Component.CoreEditor" Version="[17.0,19.0)" DisplayName="Visual Studio core editor" />
+    <Prerequisite Id="Microsoft.VisualStudio.Component.Roslyn.Compiler" Version="[17.0,19.0)" DisplayName="C# and Visual Basic Roslyn compilers" />
+  </Prerequisites>
+  <Assets>
+    <Asset Type="Microsoft.VisualStudio.VsPackage" d:Source="Project" d:ProjectName="%CurrentProject%" Path="|%CurrentProject%;PkgdefProjectOutputGroup|" />
+    <Asset Type="Microsoft.VisualStudio.ItemTemplate" d:Source="File" Path="ItemTemplates" d:TargetPath="ItemTemplates\CSharp\1033\MediatRCommand.zip" />
+    <Asset Type="Microsoft.VisualStudio.ItemTemplate" d:Source="File" Path="ItemTemplates" d:TargetPath="ItemTemplates\CSharp\1033\MediatRHandler.zip" />
+    <Asset Type="Microsoft.VisualStudio.ItemTemplate" d:Source="File" Path="ItemTemplates" d:TargetPath="ItemTemplates\CSharp\1033\MediatRNotification.zip" />
+    <Asset Type="Microsoft.VisualStudio.ItemTemplate" d:Source="File" Path="ItemTemplates" d:TargetPath="ItemTemplates\CSharp\1033\MediatRNotificationHandler.zip" />
+  </Assets>
 </PackageManifest>
