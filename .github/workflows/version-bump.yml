@@ -186,18 +186,18 @@ jobs:
         
         $prTitle = "🚀 Bump version to $newVersion"
         $prBody = @"
-## Version Bump to $newVersion
+        ## Version Bump to $newVersion
 
-This is an automated version bump created by the version-bump workflow.
+        This is an automated version bump created by the version-bump workflow.
 
-### Changes:
-- Updated ``source.extension.vsixmanifest`` version to $newVersion
-- Updated ``Properties\AssemblyInfo.cs`` (if present)
+        ### Changes:
+        - Updated ``source.extension.vsixmanifest`` version to $newVersion
+        - Updated ``Properties\AssemblyInfo.cs`` (if present)
 
-### Next Steps:
-After this PR is merged, a new release will be created and published to the marketplace.
-"@
-        
+        ### Next Steps:
+        After this PR is merged, a new release will be created and published to the marketplace.
+        "@
+                
         # Create pull request
         $prUrl = gh pr create --title $prTitle --body $prBody --base main --head $branchName
         Write-Host "Pull request created: $prUrl"
