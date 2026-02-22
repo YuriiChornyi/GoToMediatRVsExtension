@@ -12,14 +12,17 @@
     "assetFiles": [
         {
             "pathOnDisk": "Resources/icon_90_90.png",
+            "targetPath": "Resources/icon_90_90.png",
             "addressable": true
         },
         {
             "pathOnDisk": "Resources/Animation.gif",
+            "targetPath": "Resources/Animation.gif",
             "addressable": true
         },
         {
             "pathOnDisk": "Resources/Animation2.gif",
+            "targetPath": "Resources/Animation2.gif",
             "addressable": true
         }
     ]
