@@ -1,4 +1,4 @@
-name: Publish to Visual Studio Marketplace (VsixPublisher)
+name: Publish to VS Marketplace
 
 on:
   release:
@@ -6,251 +6,98 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag to publish (e.g., v1.0.0)'
+        description: 'Release tag to publish (e.g., v6.5)'
         required: true
         type: string
 
+permissions:
+  contents: read
+
 jobs:
-  publish-to-marketplace:
+  publish:
     runs-on: windows-latest
     environment: production
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         ref: ${{ inputs.release_tag || github.ref }}
-    
-    - name: Setup .NET Framework
-      uses: microsoft/setup-msbuild@v2
-      with:
-        msbuild-architecture: x64
-    
-    - name: Setup NuGet
-      uses: NuGet/setup-nuget@v2
-      with:
-        nuget-version: 'latest'
-    
-    - name: Restore NuGet packages
-      run: nuget restore VSIXExtention.sln
-    
-    - name: Build for marketplace
+
+    - name: Download VSIX from release
       shell: powershell
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        Write-Host "Building for marketplace publication..." -ForegroundColor Green
-        msbuild VSIXExtention.sln /p:Configuration=Release /p:Platform="Any CPU" /p:DeployExtension=false /p:ZipPackageCompressionLevel=normal /v:minimal
-        
-        # Find the generated VSIX file in the correct location
-        $vsixFile = Get-ChildItem -Path "." -Filter "*.vsix" -Recurse | Where-Object { $_.Directory.Name -eq "Release" } | Select-Object -First 1
-        if ($vsixFile) {
-            echo "VSIX_PATH=$($vsixFile.FullName)" >> $env:GITHUB_ENV
-            echo "VSIX_NAME=$($vsixFile.Name)" >> $env:GITHUB_ENV
-            Write-Host "VSIX file ready: $($vsixFile.FullName)"
-            Write-Host "VSIX file size: $((Get-Item $vsixFile.FullName).Length) bytes"
-        } else {
-            Write-Error "VSIX file not found in any Release directory!"
-            Write-Host "Searching for all .vsix files:"
-            Get-ChildItem -Path "." -Filter "*.vsix" -Recurse | ForEach-Object { Write-Host "Found: $($_.FullName)" }
+        $tag = "${{ inputs.release_tag || github.event.release.tag_name }}"
+        if (-not $tag) {
+            Write-Error "No release tag resolved. Check trigger context."
             exit 1
         }
-    
-    - name: Publish to Visual Studio Marketplace using VsixPublisher.exe
+        Write-Host "Downloading VSIX from release: $tag"
+
+        gh release download $tag --pattern "*.vsix" --dir .
+
+        $vsixFile = Get-ChildItem -Path "." -Filter "*.vsix" | Select-Object -First 1
+        if (-not $vsixFile) {
+            Write-Error "No VSIX file found in release $tag"
+            exit 1
+        }
+
+        echo "VSIX_PATH=$($vsixFile.FullName)" >> $env:GITHUB_ENV
+        Write-Host "Downloaded: $($vsixFile.Name) ($($vsixFile.Length) bytes)"
+
+    - name: Locate VsixPublisher.exe
+      shell: powershell
+      run: |
+        $vsWherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        if (-not (Test-Path $vsWherePath)) {
+            Write-Error "vswhere.exe not found"
+            exit 1
+        }
+
+        $vsInstallPath = & $vsWherePath -latest -products * -requires Microsoft.VisualStudio.Component.VSSDK -property installationPath
+        if (-not $vsInstallPath) {
+            $vsInstallPath = & $vsWherePath -latest -products * -property installationPath
+        }
+        if (-not $vsInstallPath) {
+            Write-Error "No Visual Studio installation found"
+            exit 1
+        }
+
+        $publisherExe = Get-ChildItem -Path $vsInstallPath -Filter "VsixPublisher.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $publisherExe) {
+            Write-Error "VsixPublisher.exe not found in $vsInstallPath"
+            exit 1
+        }
+
+        echo "VSIX_PUBLISHER=$($publisherExe.FullName)" >> $env:GITHUB_ENV
+        Write-Host "Found VsixPublisher.exe: $($publisherExe.FullName)"
+
+    - name: Publish to marketplace
       shell: powershell
       env:
         MARKETPLACE_PAT: ${{ secrets.MARKETPLACE_PAT }}
       run: |
-        Write-Host "Publishing to Visual Studio Marketplace using VsixPublisher.exe..." -ForegroundColor Green
-        
         if (-not $env:MARKETPLACE_PAT) {
             Write-Error "MARKETPLACE_PAT secret is not set!"
             exit 1
         }
-        
-        # Validate VSIX file exists
-        if (-not (Test-Path $env:VSIX_PATH)) {
-            Write-Error "VSIX file not found at path: $env:VSIX_PATH"
+
+        if (-not (Test-Path "publishManifest.json")) {
+            Write-Error "publishManifest.json not found in repo root"
             exit 1
         }
-        
-        $vsixFileInfo = Get-Item $env:VSIX_PATH
-        Write-Host "VSIX file: $($vsixFileInfo.FullName) ($($vsixFileInfo.Length) bytes)"
-        
-        # Get extension info from manifest
+
         [xml]$manifest = Get-Content "source.extension.vsixmanifest"
         $version = $manifest.PackageManifest.Metadata.Identity.Version
-        $displayName = $manifest.PackageManifest.Metadata.DisplayName
-        $publisherName = $manifest.PackageManifest.Metadata.Identity.Publisher
-        
-        Write-Host "Publishing: $displayName v$version"
-        Write-Host "Publisher: $publisherName"
-        
-        try {
-            # Locate VsixPublisher.exe using vswhere
-            Write-Host "Locating VsixPublisher.exe..." -ForegroundColor Cyan
-            
-            # First, find Visual Studio installation path
-            $vsWherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-            if (-not (Test-Path $vsWherePath)) {
-                Write-Error "vswhere.exe not found at: $vsWherePath"
-                exit 1
-            }
-            
-            # Find VS installation with VSSDK
-            $vsInstallPath = & $vsWherePath -latest -products * -requires Microsoft.VisualStudio.Component.VSSDK -property installationPath
-            if (-not $vsInstallPath) {
-                Write-Host "Visual Studio with VSSDK not found. Trying alternative approach..." -ForegroundColor Yellow
-                # Try to find any VS installation
-                $vsInstallPath = & $vsWherePath -latest -products * -property installationPath
-                if (-not $vsInstallPath) {
-                    Write-Error "No Visual Studio installation found!"
-                    exit 1
-                }
-            }
-            
-            Write-Host "Visual Studio installation: $vsInstallPath"
-            
-            # Look for VsixPublisher.exe in common locations
-            $vsixPublisherPaths = @(
-                "$vsInstallPath\VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe",
-                "$vsInstallPath\Common7\IDE\Extensions\Microsoft\VSSDK\VsixPublisher.exe",
-                "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe",
-                "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe",
-                "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe",
-                "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe"
-            )
-            
-            $vsixPublisherPath = $null
-            foreach ($path in $vsixPublisherPaths) {
-                if (Test-Path $path) {
-                    $vsixPublisherPath = $path
-                    break
-                }
-            }
-            
-            if (-not $vsixPublisherPath) {
-                Write-Host "Searching for VsixPublisher.exe recursively..." -ForegroundColor Yellow
-                $vsixPublisherPath = Get-ChildItem -Path $vsInstallPath -Name "VsixPublisher.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-                if ($vsixPublisherPath) {
-                    $vsixPublisherPath = Join-Path $vsInstallPath $vsixPublisherPath
-                }
-            }
-            
-            if (-not $vsixPublisherPath -or -not (Test-Path $vsixPublisherPath)) {
-                Write-Error "VsixPublisher.exe not found in Visual Studio installation!"
-                Write-Host "Searched paths:" -ForegroundColor Yellow
-                $vsixPublisherPaths | ForEach-Object { Write-Host "  - $_" }
-                exit 1
-            }
-            
-            Write-Host "Found VsixPublisher.exe: $vsixPublisherPath" -ForegroundColor Green
-            
-            # Use existing publish manifest file
-            Write-Host "Using existing publish manifest..." -ForegroundColor Cyan
-            
-            $manifestPath = "publishManifest.json"
-            if (-not (Test-Path $manifestPath)) {
-                Write-Error "Publish manifest not found: $manifestPath"
-                Write-Host "Please ensure publishManifest.json exists in the repository root."
-                exit 1
-            }
-            
-            # Verify the manifest file is valid JSON
-            try {
-                $publishManifestContent = Get-Content $manifestPath -Raw | ConvertFrom-Json
-                Write-Host "✅ Publish manifest validated: $manifestPath"
-                Write-Host "Publisher: $($publishManifestContent.publisher)"
-                Write-Host "Categories: $($publishManifestContent.categories -join ', ')"
-                Write-Host "Repository: $($publishManifestContent.repo)"
-            } catch {
-                Write-Error "Invalid JSON in publish manifest: $($_.Exception.Message)"
-                exit 1
-            }
-            
-            # Verify overview file exists (as referenced in manifest)
-            $overviewPath = $publishManifestContent.overview
-            if ($overviewPath -and -not (Test-Path $overviewPath)) {
-                Write-Warning "Overview file not found: $overviewPath (referenced in publishManifest.json)"
-                Write-Host "Please ensure the overview file exists or update the manifest path."
-            } else {
-                Write-Host "✅ Overview file found: $overviewPath"
-            }
-            
-            # Publish using VsixPublisher.exe
-            Write-Host "Publishing extension..." -ForegroundColor Cyan
-            
-            $publishArgs = @(
-                "publish"
-                "-payload", "`"$($env:VSIX_PATH)`""
-                "-publishManifest", "`"$manifestPath`""
-                "-personalAccessToken", $env:MARKETPLACE_PAT
-                "-ignoreWarnings", "VSIXValidatorWarning01,VSIXValidatorWarning02"
-            )
-            
-            Write-Host "Command: `"$vsixPublisherPath`" $($publishArgs -join ' ')"
-            
-            $process = Start-Process -FilePath $vsixPublisherPath -ArgumentList $publishArgs -Wait -NoNewWindow -PassThru -RedirectStandardOutput "publish-output.txt" -RedirectStandardError "publish-error.txt"
-            
-            # Read output files
-            if (Test-Path "publish-output.txt") {
-                $output = Get-Content "publish-output.txt" -Raw
-                if ($output) {
-                    Write-Host "Output:" -ForegroundColor Cyan
-                    Write-Host $output
-                }
-            }
-            
-            if (Test-Path "publish-error.txt") {
-                $errorOutput = Get-Content "publish-error.txt" -Raw
-                if ($errorOutput) {
-                    Write-Host "Error Output:" -ForegroundColor Yellow
-                    Write-Host $errorOutput
-                }
-            }
-            
-            if ($process.ExitCode -eq 0) {
-                Write-Host "✅ Successfully published to Visual Studio Marketplace!" -ForegroundColor Green
-                Write-Host "Extension: $displayName v$version" -ForegroundColor Green
-            } else {
-                Write-Error "❌ VsixPublisher.exe failed with exit code: $($process.ExitCode)"
-                exit 1
-            }
-            
-        } catch {
-            Write-Error "Failed to publish extension: $($_.Exception.Message)"
-            Write-Host $_.ScriptStackTrace -ForegroundColor Red
+        Write-Host "Publishing version $version to Visual Studio Marketplace..."
+
+        & $env:VSIX_PUBLISHER publish -payload "$env:VSIX_PATH" -publishManifest "publishManifest.json" -personalAccessToken $env:MARKETPLACE_PAT -ignoreWarnings "VSIXValidatorWarning01,VSIXValidatorWarning02"
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "VsixPublisher.exe failed with exit code $LASTEXITCODE"
             exit 1
-        } finally {
-            # Clean up temporary files (keep publishManifest.json and overview files as they're part of the repo)
-            Remove-Item "publish-output.txt" -ErrorAction SilentlyContinue
-            Remove-Item "publish-error.txt" -ErrorAction SilentlyContinue
         }
-    
-    - name: Attach VSIX to GitHub Release
-      if: success() && github.event_name == 'release'
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ${{ env.VSIX_PATH }}
-        asset_name: ${{ env.VSIX_NAME }}
-        asset_content_type: application/zip
-    
-    - name: Upload VSIX as workflow artifact
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: vsix-package-${{ github.run_number }}
-        path: ${{ env.VSIX_PATH }}
-        retention-days: 30
-    
-    - name: Marketplace publication completed
-      if: success()
-      shell: powershell
-      run: |
-        Write-Host "🎉 Marketplace publication completed successfully!" -ForegroundColor Green
-        Write-Host "Your extension is now available on the Visual Studio Marketplace!" -ForegroundColor Cyan
-        
-        if ($env:GITHUB_EVENT_NAME -eq "release") {
-            Write-Host "VSIX file has been attached to the GitHub release!" -ForegroundColor Green
-        }
+
+        Write-Host "Successfully published version $version to the marketplace."
