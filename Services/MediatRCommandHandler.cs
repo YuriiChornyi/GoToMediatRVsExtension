@@ -48,7 +48,7 @@ namespace VSIXExtention.Services
                             "Make sure:\n" +
                             "• You're positioned on a MediatR IRequest implementation\n" +
                             "• Or you're positioned on a nested MediatR call inside a handler\n" +
-                            "• The cursor is on the class name or identifier",
+                            "• The cursor is on the type name or identifier",
                             "MediatR Extension");
                         return false;
                     }
@@ -61,7 +61,7 @@ namespace VSIXExtention.Services
 
                     progress.Report(0.5, "Searching for handlers...");
                     
-                    // Step 3: Check if this class implements both IRequest and INotification
+                    // Step 3: Check if this type implements both IRequest and INotification
                     bool implementsBoth = MediatRPatternMatcher.ImplementsBothRequestAndNotification(targetRequestType, semanticModel);
                     
                     // Step 4: Find all handlers (both request and notification if applicable)
@@ -78,7 +78,7 @@ namespace VSIXExtention.Services
                         if (implementsBoth)
                         {
                             message = $"Could not find any handlers for '{requestTypeName}'.\n\n" +
-                                     $"This class implements both IRequest and INotification, but no handlers were found.\n\n" +
+                                     $"This type implements both IRequest and INotification, but no handlers were found.\n\n" +
                                      "Make sure:\n" +
                                      "• The corresponding IRequestHandler exists in the solution\n" +
                                      "• The corresponding INotificationHandler(s) exist in the solution\n" +
@@ -149,7 +149,7 @@ namespace VSIXExtention.Services
                             "Make sure:\n" +
                             "• You're positioned on a MediatR handler or request type\n" +
                             "• Or you're positioned inside a handler method\n" +
-                            "• The cursor is on the class name or identifier",
+                            "• The cursor is on the type name or identifier",
                             "MediatR Extension");
                         return false;
                     }
@@ -311,7 +311,7 @@ namespace VSIXExtention.Services
                     var root = await syntaxTree.GetRootAsync();
                     var node = root.FindNode(new Microsoft.CodeAnalysis.Text.TextSpan(position, 0), getInnermostNodeForTie: true);
                     
-                    // Find the containing handler class
+                    // Find the containing handler type (class/record)
                     var typeDeclaration = node.FirstAncestorOrSelf<TypeDeclarationSyntax>();
                     if (typeDeclaration != null && semanticModel != null)
                     {
@@ -323,9 +323,9 @@ namespace VSIXExtention.Services
                         }
                         else
                         {
-                            // If we're not in a handler class (e.g., controller), 
+                            // If we're not in a handler type (e.g., controller), 
                             // we can't provide "shallow" navigation, so return null to skip usage navigation
-                            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: In nested context but not in handler class ({typeSymbol?.Name}), skipping usage navigation");
+                            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: In nested context but not in handler type ({typeSymbol?.Name}), skipping usage navigation");
                             return null;
                         }
                     }

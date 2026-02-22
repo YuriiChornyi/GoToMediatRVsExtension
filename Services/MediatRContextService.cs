@@ -56,34 +56,52 @@ namespace VSIXExtention.Services
                 var root = await syntaxTree.GetRootAsync();
                 var node = root.FindNode(textSpan, getInnermostNodeForTie: true);
 
-                // Quick syntax check - must be in/on a type declaration (class/record) or identifier
-                var typeDeclaration = node.FirstAncestorOrSelf<TypeDeclarationSyntax>();
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: GetMediatRTypeSymbol: Node type: {node?.GetType().Name}, Text: '{node?.ToString()?.Trim().Substring(0, Math.Min(50, node?.ToString()?.Trim().Length ?? 0))}'");
+
+                // Find the containing type declaration (class, record, struct, interface)
+                var typeDeclaration = FindContainingTypeDeclaration(node);
                 var identifierName = node as IdentifierNameSyntax ?? node.FirstAncestorOrSelf<IdentifierNameSyntax>();
 
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: GetMediatRTypeSymbol: TypeDeclaration: {typeDeclaration?.GetType().Name} ({typeDeclaration?.Identifier.ValueText}), IdentifierName: {identifierName?.Identifier.ValueText}");
+
                 if (typeDeclaration == null && identifierName == null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: GetMediatRTypeSymbol: No type declaration or identifier found");
                     return null;
+                }
 
                 // Only get semantic model if we passed syntax checks (expensive operation)
                 var semanticModel = await document.GetSemanticModelAsync();
                 if (semanticModel == null)
                     return null;
 
-                // Check type declaration first (class, record, etc. - more common case)
+                // Check type declaration first (class, record, struct - more common case)
                 if (typeDeclaration != null)
                 {
                     var typeSymbol = semanticModel.GetDeclaredSymbol(typeDeclaration) as INamedTypeSymbol;
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: GetMediatRTypeSymbol: TypeSymbol from declaration: {typeSymbol?.Name}, IsRecord: {typeSymbol?.IsRecord}, TypeKind: {typeSymbol?.TypeKind}");
+                    
                     if (IsValidMediatRType(typeSymbol, semanticModel))
+                    {
+                        System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: GetMediatRTypeSymbol: Found valid MediatR type: {typeSymbol.Name}");
                         return typeSymbol;
+                    }
                 }
 
-                // Check identifier reference (less common)
+                // Check identifier reference (type name used elsewhere)
                 if (identifierName != null)
                 {
                     var symbolInfo = semanticModel.GetSymbolInfo(identifierName);
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: GetMediatRTypeSymbol: SymbolInfo from identifier: {symbolInfo.Symbol?.GetType().Name} - {symbolInfo.Symbol?.Name}");
+                    
                     if (symbolInfo.Symbol is INamedTypeSymbol namedTypeSymbol && IsValidMediatRType(namedTypeSymbol, semanticModel))
+                    {
+                        System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: GetMediatRTypeSymbol: Found valid MediatR type from identifier: {namedTypeSymbol.Name}");
                         return namedTypeSymbol;
+                    }
                 }
 
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: GetMediatRTypeSymbol: No valid MediatR type found");
                 return null;
             }
             catch (Exception ex)
@@ -91,6 +109,57 @@ namespace VSIXExtention.Services
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRContext: Error getting type symbol: {ex.Message}");
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Finds the containing type declaration from a syntax node, handling record-specific syntax.
+        /// For records with primary constructors, the cursor may be on a ParameterSyntax, BaseTypeSyntax, etc.
+        /// </summary>
+        private static TypeDeclarationSyntax FindContainingTypeDeclaration(SyntaxNode node)
+        {
+            if (node == null)
+                return null;
+
+            // Direct check - node is already a type declaration
+            if (node is TypeDeclarationSyntax directType)
+                return directType;
+
+            // Handle ParameterSyntax in primary constructors (record Query(int Id) : IRequest<T>)
+            if (node is ParameterSyntax || node.FirstAncestorOrSelf<ParameterSyntax>() != null)
+            {
+                var parameterList = node.FirstAncestorOrSelf<ParameterListSyntax>();
+                if (parameterList?.Parent is TypeDeclarationSyntax typeFromParam)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Found type from primary constructor parameter: {typeFromParam.Identifier.ValueText}");
+                    return typeFromParam;
+                }
+            }
+
+            // Handle BaseTypeSyntax (: IRequest<T> part)
+            if (node is BaseTypeSyntax || node is SimpleBaseTypeSyntax || 
+                node.FirstAncestorOrSelf<BaseTypeSyntax>() != null)
+            {
+                var baseList = node.FirstAncestorOrSelf<BaseListSyntax>();
+                if (baseList?.Parent is TypeDeclarationSyntax typeFromBase)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Found type from base type list: {typeFromBase.Identifier.ValueText}");
+                    return typeFromBase;
+                }
+            }
+
+            // Handle TypeParameterSyntax (generic type parameters)
+            if (node is TypeParameterSyntax || node.FirstAncestorOrSelf<TypeParameterSyntax>() != null)
+            {
+                var typeParamList = node.FirstAncestorOrSelf<TypeParameterListSyntax>();
+                if (typeParamList?.Parent is TypeDeclarationSyntax typeFromTypeParam)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Found type from type parameter: {typeFromTypeParam.Identifier.ValueText}");
+                    return typeFromTypeParam;
+                }
+            }
+
+            // Standard ancestor walk - works for class, record, struct, interface
+            return node.FirstAncestorOrSelf<TypeDeclarationSyntax>();
         }
 
         private bool IsValidContext(ITextView textView)
@@ -173,8 +242,8 @@ namespace VSIXExtention.Services
                 var root = await syntaxTree.GetRootAsync();
                 var node = root.FindNode(textSpan, getInnermostNodeForTie: true);
 
-                // Check if we're in a handler class or Handle method
-                var typeDeclaration = node.FirstAncestorOrSelf<TypeDeclarationSyntax>();
+                // Check if we're in a handler type (class/record) or Handle method
+                var typeDeclaration = FindContainingTypeDeclaration(node);
                 var methodDeclaration = node.FirstAncestorOrSelf<MethodDeclarationSyntax>();
 
                 if (typeDeclaration == null)
@@ -193,7 +262,7 @@ namespace VSIXExtention.Services
                     if (methodDeclaration?.Identifier.ValueText == "Handle")
                         return true;
 
-                    // If we're on the class name or elsewhere in the handler class, also show
+                    // If we're on the type name or elsewhere in the handler type, also show
                     return true;
                 }
 
@@ -366,7 +435,7 @@ namespace VSIXExtention.Services
                 // Check if this is a MediatR handler (preferred context)
                 bool isHandlerClass = IsValidMediatRHandler(typeSymbol, semanticModel);
                 
-                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: {typeSymbol?.Name ?? "null"} isHandlerClass: {isHandlerClass}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: {typeSymbol?.Name ?? "null"} isHandlerType: {isHandlerClass}");
 
                 // Now do full semantic analysis
                 if (invocationNode != null && IsNestedMediatRCall(invocationNode, semanticModel))
@@ -413,7 +482,7 @@ namespace VSIXExtention.Services
 
         /// <summary>
         /// Determines if cursor is positioned on a nested MediatR call inside a handler method.
-        /// This is specifically for usage navigation (shallow) - only works inside handler classes.
+        /// This is specifically for usage navigation (shallow) - only works inside handler types (class/record).
         /// </summary>
         public async Task<bool> IsInNestedMediatRCallInHandlerContextAsync(ITextView textView)
         {
@@ -429,7 +498,7 @@ namespace VSIXExtention.Services
                     return false;
                 }
 
-                // Now verify we're actually in a handler class
+                // Now verify we're actually in a handler type (class/record)
                 var document = _workspaceService.GetDocumentFromTextView(textView);
                 if (document == null)
                     return false;
@@ -454,7 +523,7 @@ namespace VSIXExtention.Services
                 var typeSymbol = semanticModel.GetDeclaredSymbol(typeDeclaration) as INamedTypeSymbol;
                 bool isHandlerClass = IsValidMediatRHandler(typeSymbol, semanticModel);
                 
-                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Nested context in handler check - {typeSymbol?.Name} isHandlerClass: {isHandlerClass}");
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Nested context in handler check - {typeSymbol?.Name} isHandlerType: {isHandlerClass}");
                 
                 return isHandlerClass;
             }
