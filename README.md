@@ -1,4 +1,5 @@
 ## MediatR Navigation Extension (Visual Studio 2022)
+[![Release on Push to Main](https://github.com/YuriiChornyi/GoToMediatRVsExtension/actions/workflows/build-and-publish.yml/badge.svg?branch=main)](https://github.com/YuriiChornyi/GoToMediatRVsExtension/actions/workflows/build-and-publish.yml)
 
 Jump instantly between MediatR requests/notifications and their handlers, and from handlers to Send/Publish call sites. Fast, context‑aware, and built for VS 2022.
 

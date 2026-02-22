@@ -11,15 +11,15 @@
     "tags": [ "CQRS", "Navigation", "MediatR" ],
     "assetFiles": [
         {
-            "path": "Resources/icon_90_90.png",
+            "pathOnDisk": "Resources/icon_90_90.png",
             "addressable": true
         },
         {
-            "path": "Resources/Animation.gif",
+            "pathOnDisk": "Resources/Animation.gif",
             "addressable": true
         },
         {
-            "path": "Resources/Animation2.gif",
+            "pathOnDisk": "Resources/Animation2.gif",
             "addressable": true
         }
     ]
