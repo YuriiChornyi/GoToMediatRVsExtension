@@ -1,328 +1,256 @@
-# MediatR Navigation Extension - Project Analysis & Cursor Guidelines
+# MediatR Navigation Extension — Project Guidelines
 
 ## Project Overview
 
-**MediatR Navigation Extension** is a Visual Studio 2022-2026 extension (.VSIX) that provides intelligent navigation between MediatR requests/notifications and their corresponding handlers. The extension uses Roslyn for code analysis and offers bidirectional navigation with context-aware commands.
+**MediatR Navigation Extension** is a Visual Studio 2022–2026 extension (.VSIX) that provides Roslyn-powered bidirectional navigation between MediatR requests/notifications and their handlers, plus VS item templates for scaffolding MediatR types.
 
-### Core Functionality
-- **Go to MediatR Implementation**: Navigate from requests/notifications to their handlers (Ctrl+Alt+F12)
-- **Go to MediatR Send/Publish**: Navigate from handlers to usage locations (Ctrl+Alt+F11)
-- **Item Templates**: VS templates for creating MediatR commands, handlers, and notifications
-- **Smart Context Detection**: Commands only appear when relevant to current cursor position
-- **Multi-Handler Support**: Selection dialog when multiple handlers/usages exist
+- **Go to MediatR Implementation** (`Ctrl+Alt+F12`) — from a request/notification (or a nested `_mediator.Send/Publish` call) to its handler(s)
+- **Go to MediatR Send/Publish** (`Ctrl+Alt+F11`) — from a handler (or a nested call inside a handler) back to all `Send/Publish` call sites
+- Commands appear only when the cursor is in a relevant context (context-aware visibility via `BeforeQueryStatus`)
+- Multi-result selection dialog when more than one handler or usage is found
 
-## Architecture Overview
+---
 
-### Technology Stack
-- **Target Framework**: .NET Framework 4.8
-- **Visual Studio**: 2022-2026 (17.0-18.x)
-- **Language**: C# 
-- **Key Dependencies**:
-  - Microsoft.VisualStudio.SDK (17.14.40265)
-  - Microsoft.CodeAnalysis.CSharp (4.14.0)
-  - Microsoft.VisualStudio.LanguageServices (4.14.0)
-  - Community.VisualStudio.Toolkit.17 (17.0.533)
+## Technology Stack
 
-### Project Structure
+| Concern | Detail |
+|---|---|
+| Target framework | .NET Framework 4.8 |
+| Visual Studio target | 2022–2026 (17.0–19.0, amd64) |
+| Language | C# |
+| Roslyn | `Microsoft.CodeAnalysis.CSharp` 4.14.0 + `Microsoft.VisualStudio.LanguageServices` 4.14.0 |
+| VS SDK | `Microsoft.VisualStudio.SDK` 17.14.40265 |
+| Threading | `Microsoft.VisualStudio.Threading` 17.14.15 (`JoinableTaskFactory`) |
+| VS Toolkit | `Community.VisualStudio.Toolkit.17` 17.0.533 |
+| UI | WPF (`HandlerSelectionDialog.xaml`) |
+| Build | `Microsoft.VSSDK.BuildTools` 17.14.2094 |
+
+---
+
+## Project Structure
+
 ```
-GoToMediatRVsExtension/
-├── Services/                    # Core business logic
-│   ├── MediatRCommandHandler.cs       # Main command orchestration
-│   ├── MediatRNavigationService.cs    # Navigation & UI coordination
-│   ├── MediatRHandlerFinder.cs        # Handler discovery
-│   ├── MediatRUsageFinder.cs          # Usage location discovery
-│   ├── MediatRContextService.cs       # Context detection
-│   ├── NavigationUiService.cs         # UI dialogs & progress
-│   └── WorkspaceService.cs            # Roslyn workspace management
-├── Models/                      # Data transfer objects
-│   ├── MediatRHandlerInfo.cs          # Handler metadata
-│   ├── MediatRRequestInfo.cs          # Request metadata
-│   ├── MediatRUsageInfo.cs            # Usage metadata
-│   ├── HandlerDisplayInfo.cs          # UI display data
-│   └── UsageDisplayInfo.cs            # UI display data
+VSIXExtention/
+├── Services/
+│   ├── MediatRCommandHandler.cs       # Orchestration — coordinates the full navigation flow
+│   ├── MediatRContextService.cs       # Context detection — what is the cursor positioned on?
+│   ├── MediatRHandlerFinder.cs        # Handler discovery (thin wrapper over MediatRPatternMatcher)
+│   ├── MediatRUsageFinder.cs          # Send/Publish call-site discovery
+│   ├── MediatRNavigationService.cs    # VS navigation + multi-result selection UI
+│   ├── NavigationUiService.cs         # Dialogs, progress bar, message boxes
+│   └── WorkspaceService.cs            # Roslyn VisualStudioWorkspace access
+├── Models/
+│   ├── MediatRHandlerInfo.cs          # Handler metadata (implements Equals/GetHashCode)
+│   ├── MediatRRequestInfo.cs          # Request/notification metadata
+│   ├── MediatRUsageInfo.cs            # Usage call-site metadata (implements Equals/GetHashCode)
+│   ├── HandlerDisplayInfo.cs          # UI display wrapper for handlers
+│   └── UsageDisplayInfo.cs            # UI display wrapper for usages
 ├── Helpers/
-│   └── RoslynSymbolHelper.cs          # Roslyn utility methods
-├── Templates/                   # VS item templates
+│   └── RoslynSymbolHelper.cs          # Standalone utility: file path → (SemanticModel, INamedTypeSymbol)
+├── Templates/                         # VS item templates (compiled to ZIP in VSIX)
 │   ├── MediatRCommand.cs/.vstemplate
 │   ├── MediatRHandler.cs/.vstemplate
 │   ├── MediatRNotification.cs/.vstemplate
 │   └── MediatRNotificationHandler.cs/.vstemplate
-├── MediatRPatternMatcher.cs     # Core pattern recognition
-├── HandlerSelectionDialog.xaml  # Multi-handler selection UI
-├── VSIXExtentionPackage.cs      # VS package entry point
-├── VSPackage.vsct              # Command definitions
-└── source.extension.vsixmanifest # Extension metadata
+├── MediatRPatternMatcher.cs           # Core MediatR pattern recognition (static)
+├── HandlerSelectionDialog.cs/.xaml    # WPF multi-result selection dialog
+├── VSIXExtentionPackage.cs            # AsyncPackage entry point, command registration
+├── VSPackage.vsct                     # Command/menu/keyboard shortcut definitions
+└── source.extension.vsixmanifest      # Extension identity and metadata
 ```
 
-## Core Components Deep Dive
+---
 
-### 1. MediatRPatternMatcher.cs
-**Purpose**: Central pattern recognition and type analysis
-**Key Methods**:
-- `IsMediatRRequest()`: Identifies IRequest/INotification implementations
-- `IsMediatRHandler()`: Identifies handler implementations
-- `GetAllRequestInfo()`: Handles dual-interface implementations (IRequest + INotification)
-- `FindAllHandlersForTypeSymbol()`: Main handler discovery with deduplication
-- `AreTypesEqual()`: Robust type comparison across assemblies
+## Architecture
 
-**Critical Features**:
-- Supports both IRequest and INotification on same class
-- Navigates to Handle method location (not just class)
-- Symbol-based matching to avoid name collisions
-- Parallel project processing for performance
+```
+VSIXExtentionPackage          ← VS entry point, constructs service graph
+    └── MediatRCommandHandler ← orchestration
+          ├── MediatRContextService    ← cursor context detection
+          ├── MediatRHandlerFinder     ← handler discovery
+          │     └── MediatRPatternMatcher (static)
+          ├── MediatRUsageFinder       ← Send/Publish call-site discovery
+          └── MediatRNavigationService ← navigation + UI
+                └── NavigationUiService
+                      └── HandlerSelectionDialog (WPF)
 
-### 2. Services Layer
-**MediatRCommandHandler**: Orchestrates the entire navigation flow
-- Handles both "Go to Implementation" and "Go to Usage" commands
-- Manages progress reporting and error handling
-- Determines context (direct request vs nested call)
+WorkspaceService  ← injected into all services that need Roslyn workspace
+```
 
-**MediatRNavigationService**: Manages actual navigation and UI
-- Single vs multiple handler logic
-- File existence validation
-- DTE-based document opening and positioning
-- Context-aware dialog titles
+`VSIXExtentionPackage` is the composition root — it constructs all services in `InitializeAsync` and passes them down. Do not introduce a DI container.
 
-**MediatRContextService**: Smart context detection
-- `IsInMediatRRequestContextAsync()`: Detects request/notification context
-- `IsInMediatRHandlerContextAsync()`: Detects handler context  
-- `IsInNestedMediatRCallContextAsync()`: Detects nested calls within handlers
-- Supports mixed contexts (nested calls)
-
-### 3. VS Integration
-**VSIXExtentionPackage.cs**: Main VS package
-- Async initialization pattern
-- Command registration with BeforeQueryStatus handlers
-- UI thread management with JoinableTaskFactory
-- Service acquisition and workspace setup
-
-**VSPackage.vsct**: Command definitions
-- Edit menu and context menu integration
-- Keyboard shortcuts (Ctrl+Alt+F12, Ctrl+Alt+F11)
-- Dynamic visibility flags
+---
 
 ## Supported MediatR Patterns
 
-### Request Types
-- `IRequest` (command without response)
-- `IRequest<TResponse>` (query with response)
-- `INotification` (event)
-- **Dual implementations** (same class implements both IRequest and INotification)
+### Request types
+- `IRequest` — command without response
+- `IRequest<TResponse>` — query with response
+- `INotification` — event/notification
+- Dual implementation: a single class implementing both `IRequest` and `INotification`
 
-### Handler Types
-- `IRequestHandler<TRequest>`
-- `IRequestHandler<TRequest, TResponse>`
-- `INotificationHandler<TNotification>`
-- `IStreamRequestHandler<TRequest, TResponse>` (streaming)
-- `IRequestExceptionHandler<TRequest, TResponse, TException>` (exception handling)
-- `IRequestExceptionAction<TRequest, TException>` (exception actions)
-- **Multiple handlers** per request/notification (supported)
+### Handler types (`MediatRHandlerType` enum)
+| Enum value | Interface |
+|---|---|
+| `RequestHandler` | `IRequestHandler<TRequest>` / `IRequestHandler<TRequest, TResponse>` |
+| `NotificationHandler` | `INotificationHandler<TNotification>` |
+| `StreamRequestHandler` | `IStreamRequestHandler<TRequest, TResponse>` |
+| `RequestExceptionHandler` | `IRequestExceptionHandler<TRequest, TResponse, TException>` |
+| `RequestExceptionAction` | `IRequestExceptionAction<TRequest, TException>` |
 
-### Usage Patterns
-- Direct calls: `_mediator.Send(request)`, `_mediator.Publish(notification)`
-- Variable usage: `var result = await _mediator.Send(myRequest)`
-- Parameter passing: method calls with MediatR requests as parameters
+### Usage patterns detected
+- Direct: `_mediator.Send(request)`, `_mediator.Publish(notification)`
+- Async: `await _mediator.SendAsync(...)`, `await _mediator.PublishAsync(...)`
+- Conditional access: `_mediator?.Send(...)`
+- Nested: cursor inside a method body that contains a `Send/Publish` call
 
-## Current Status & Known Issues
+---
 
-### Completed Features ✅
-- Basic request → handler navigation
-- Handler → usage navigation
-- Multi-handler selection dialog
-- Context-aware command visibility
-- Nested call support (mixed contexts)
-- Handle method navigation (not just class)
-- Symbol-based type matching
-- Item templates integration
-- Parallel project processing
+## Coding Standards
 
-### Roadmap Items (from ROADMAP.md) 📋
-**Phase 1 - Correctness & UX (High Priority)**:
-- Cache invalidation fixes
-- Navigate to Handle method location
-- Symbol-based handler matching
-- Dynamic dialog titles
-- Thread-safe workspace initialization
-- Cancellation token support
+### Threading — mandatory rules
 
-**Phase 2 - Performance (Medium Priority)**:
-- Scope searches to MediatR projects only
-- Negative-result caching with TTL
+- **All Roslyn work is async.** Every method that touches `SemanticModel`, `Compilation`, or `ISymbol` must be `async Task<T>` and accept a `CancellationToken`.
+- **Switch to the UI thread only when necessary** — dialogs, DTE calls, `IVsStatusbar`, command registration:
+  ```csharp
+  await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
+  ```
+- **Never use `.Result`, `.Wait()`, or `Task.Run(...).Result`** — these deadlock VS extensions.
+- **Never use `ConfigureAwait(false)`** in VS extension code — the VS threading model requires the joinable task context.
+- Thread `CancellationToken` through every async method signature.
 
-**Phase 3 - Feature Coverage (Medium Priority)**:
-- Streaming support (`IStreamRequest<T>`, `IStreamRequestHandler<T,R>`)
-- Enhanced usage detection (interface-typed variables)
-- VS navigation robustness (IVsUIShellOpenDocument vs DTE)
-- Grouped selection UI
+### Roslyn best practices
 
-**Phase 4 - Templates & Docs (Low-Medium Priority)**:
-- Fix handler template signatures
-- Documentation updates
-- Version bumping
+- **Symbol-first, not string-first.** Use `SymbolEqualityComparer.Default.Equals()` as the primary comparison. Fall back to fully-qualified display string, then metadata name + assembly name (the 3-tier pattern already in `AreTypesEqual()`).
+- **Syntax before semantics for context detection.** Do cheap syntax checks (file extension, content type, method name string match) before acquiring a `SemanticModel`. See `MediatRContextService.IsValidContext()` and `IsNestedMediatRCall()`.
+- **Scope to MediatR projects early.** Skip projects where `compilation.GetTypeByMetadataName("MediatR.IRequest") == null`.
+- **Parallel project scanning.** Use `Task.WhenAll()` across projects — see `MediatRPatternMatcher.FindHandlersInSolutionBySymbol()`.
+- Always null-check `semanticModel` and `symbol` before use.
+- Use `GetDeclaredSymbol()` for type declarations, `GetSymbolInfo().Symbol` for references.
+- Navigate to the `Handle`/`Execute` **method location**, not just the class — see `GetHandlerInfo()` using `FindImplementationForInterfaceMember`.
 
-## Cursor Guidelines for Future Development
+### Error handling
 
-### 1. Code Standards & Patterns
+- Use early returns and guard clauses — minimize nesting.
+- Return `NavigationResult.CreateFailure(reason, message)` rather than throwing for expected failures.
+- Show user-facing errors via `NavigationUiService.ShowErrorMessageAsync()` — never `MessageBox.Show()` directly.
+- Log all debug output with the consistent prefix:
+  ```
+  MediatRNavigationExtension: [ServiceName]: [message]
+  ```
+  using `System.Diagnostics.Debug.WriteLine()`.
 
-#### Threading & Async
-- **MANDATORY**: All Roslyn work must be async with CancellationToken
-- Use `ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync()` **only** for:
-  - UI operations (dialogs, InfoBars)
-  - DTE/VS service calls
-  - Command registration in InitializeAsync
-- **NEVER** use `.Result`, `.Wait()`, or `ConfigureAwait(false)`
-- Thread CancellationToken through all service methods
+### Model equality
 
-#### Roslyn Best Practices
-- Prefer **symbol-first** approaches over syntax analysis
-- Use `SymbolEqualityComparer.Default.Equals()` for type comparisons
-- Handle: partial classes, nested types, file-scoped namespaces, global usings
-- Always check `semanticModel != null` before use
-- Use `GetDeclaredSymbol()` for type declarations
-- Scope searches to projects that reference MediatR (`compilation.GetTypeByMetadataName("MediatR.IRequest")`)
+`MediatRHandlerInfo` and `MediatRUsageInfo` implement `Equals`/`GetHashCode` for use in `HashSet<T>` deduplication. When adding new fields to these models, update both methods.
 
-#### Error Handling
-- Use early returns and minimal nesting
-- Handle edge cases first
-- Provide meaningful error messages to users
-- Log debug information with consistent prefixes: `"MediatRNavigationExtension: [Service]: [Message]"`
+---
 
-#### Performance
-- Use parallel processing: `Task.WhenAll()` for project scanning
-- Filter syntax trees early (C# files only)
-- Check MediatR availability before processing projects
-- Implement caching where appropriate (but ensure proper invalidation)
+## File Modification Guidelines
 
-### 2. File Modification Guidelines
+### `MediatRPatternMatcher.cs`
+The single source of truth for all MediatR interface recognition. All interface name constants live here. When adding support for a new MediatR interface:
+1. Add a constant for the interface name.
+2. Extend `IsMediatRHandler()` / `GetHandlerInfo()` to recognize it.
+3. Add a value to `MediatRHandlerType` if it's a new handler category.
+4. Keep `AreTypesEqual()` unchanged — it is the canonical comparison method.
 
-#### Core Services (`Services/*`)
-- **Extend existing services** rather than creating new ones
-- Follow established patterns in `MediatRCommandHandler`
-- Maintain separation of concerns:
-  - `MediatRCommandHandler`: Orchestration
-  - `MediatRNavigationService`: Navigation & UI
-  - `MediatRHandlerFinder`/`MediatRUsageFinder`: Discovery
-  - `MediatRContextService`: Context detection
+### `MediatRContextService.cs`
+Context detection must remain performance-first:
+1. `IsValidContext()` fast-exit first (no semantic work).
+2. Syntax-level checks before `GetSemanticModelAsync()`.
+3. Only acquire `SemanticModel` when syntax checks pass.
 
-#### Pattern Matching (`MediatRPatternMatcher.cs`)
-- Centralize all MediatR pattern logic here
-- Keep interface checks consistent (`ContainingNamespace?.ToDisplayString() == "MediatR"`)
-- Handle generic type arguments carefully
-- Maintain backward compatibility with existing methods
+### `MediatRCommandHandler.cs`
+Orchestration only — no Roslyn analysis, no UI. If you find yourself doing symbol work here, move it to `MediatRContextService`, `MediatRHandlerFinder`, or `MediatRUsageFinder`.
 
-#### VS Integration
-- **VSPackage.vsct**: Add new commands to existing groups
-- **VSIXExtentionPackage.cs**: Register commands in `RegisterCommandsAsync()`
-- **source.extension.vsixmanifest**: Increment version for user-visible changes
+### `WorkspaceService.cs`
+Dual-init pattern (explicit set from `InitializeAsync` + lazy fallback). Do not remove the lazy fallback — it is needed when the workspace is accessed before `InitializeAsync` completes.
 
-#### UI Components
-- **HandlerSelectionDialog.xaml**: Keep styling minimal and consistent
-- Construct dialogs on UI thread only
-- Populate ViewModels off-thread, then bind
-- Validate XAML bindings and event names
+### `VSIXExtentionPackage.cs`
+- Register new commands in `RegisterCommandsAsync()` following the existing `OleMenuCommand` + `BeforeQueryStatus` pattern.
+- All service construction happens here (composition root). Keep it that way.
+- `GetActiveTextView()` and `GetCaretOrSelectionPosition()` are the canonical way to get the editor context — do not duplicate this logic.
 
-### 3. Testing & Validation
+### `VSPackage.vsct`
+- Add new commands to existing groups — do not create new groups unless adding a genuinely separate feature area.
+- Command IDs are defined as constants in `VSIXExtentionPackage.cs` — keep them in sync.
 
-#### Build Requirements
-- Target: **AnyCPU**, **.NET Framework 4.8**
-- Launch: Experimental instance with `/rootsuffix Exp`
-- Test in VS 2022 (17.0+)
+### `source.extension.vsixmanifest`
+- **Increment `Version`** for every user-visible change before opening a PR (the PR validation workflow enforces this).
+- **Never change** `Publisher`, `Id`, or the `Identity` GUID — these are the marketplace identity.
+- Version format is `X.Y` (e.g., `6.4`) — two-part, not three-part.
 
-#### Functional Testing
-- Test request → handler navigation (single & multiple handlers)
-- Test handler → usage navigation (single & multiple usages)
-- Test mixed contexts (nested calls within handlers)
-- Test dual-interface implementations (IRequest + INotification)
-- Verify context-sensitive command visibility
-- Test cancellation behavior
+### Item Templates (`Templates/`)
+- Templates use `$rootnamespace$` and `$safeitemname$` standard VS parameters.
+- Handler templates use custom parameters (`$requestname$`, `$notificationname$`) with defaults.
+- After editing a template `.cs` file, verify the corresponding `.vstemplate` `DefaultName` and `ProjectItem` reference are still correct.
 
-#### Performance Testing
-- Large solutions (100+ projects)
-- Solutions without MediatR references
-- Deeply nested namespace structures
-- Generic type hierarchies
+---
 
-### 4. Common Pitfalls to Avoid
+## Adding New Features
 
-#### Threading Issues
-- ❌ Don't call UI operations from background threads
-- ❌ Don't block async operations with `.Result`/.Wait()`
-- ❌ Don't use `ConfigureAwait(false)` in VS extensions
+### New MediatR interface support
+1. Add interface name constant to `MediatRPatternMatcher`.
+2. Extend `IsMediatRHandler()` or `IsMediatRRequest()`.
+3. Extend `GetHandlerInfo()` to populate the new `MediatRHandlerType`.
+4. Update `MediatRNavigationService.FormatHandlerDisplayText()` to show the new type prefix in the selection dialog.
 
-#### Roslyn Usage
-- ❌ Don't rely on string-based type matching only
-- ❌ Don't assume single interface implementation
-- ❌ Don't ignore cancellation tokens
-- ❌ Don't process non-C# projects
+### New command
+1. Define the command ID constant in `VSIXExtentionPackage.cs`.
+2. Add command + keyboard shortcut to `VSPackage.vsct`.
+3. Register in `RegisterCommandsAsync()` with a `BeforeQueryStatus` handler.
+4. Implement execution in `MediatRCommandHandler.cs`.
+5. Add context detection method to `MediatRContextService.cs` if needed.
 
-#### VS Integration
-- ❌ Don't change target framework without approval
-- ❌ Don't modify Publisher/Identity in manifest
-- ❌ Don't break existing command IDs
-- ❌ Don't skip version increments for user-visible changes
+### New context detection scenario
+Add a method to `MediatRContextService` following the existing pattern:
+1. `IsValidContext()` guard first.
+2. Syntax check (cheap).
+3. Semantic check (expensive, only if syntax passes).
+4. Wire it into the `BeforeQueryStatus` handler in `VSIXExtentionPackage.cs`.
 
-### 5. Development Workflow
+---
 
-#### Making Changes
-1. **Read existing code** to understand patterns
-2. **Extend existing services** rather than duplicating logic
-3. **Test incrementally** with simple cases first
-4. **Handle edge cases** (no handlers, multiple handlers, mixed types)
-5. **Update documentation** if behavior changes
+## CI/CD Workflow
 
-#### Code Review Checklist
-- [ ] Async/await used correctly with CancellationToken
-- [ ] UI thread switching only when necessary
-- [ ] Symbol-based type comparisons
-- [ ] Error handling with user-friendly messages
-- [ ] Debug logging with consistent format
-- [ ] No breaking changes to existing functionality
-- [ ] Version incremented if user-visible changes
-- [ ] Tests pass in experimental VS instance
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `pr-validation.yml` | PR to `main` | Build (Debug) + verify version in manifest is higher than latest `v*` tag |
+| `build-and-publish.yml` | Push to `main` | Build (Release) + create GitHub Release tagged `v{version}` with VSIX attached and commit messages as notes |
+| `marketplace-publish.yml` | Release published or manual | Build + publish to VS Marketplace via `VsixPublisher.exe` |
 
-### 6. Extension Points for New Features
+**Required secret:** `MARKETPLACE_PAT` — Azure DevOps PAT with `Marketplace (Publish)` scope.
 
-#### Adding New MediatR Patterns
-1. Update `MediatRPatternMatcher.cs` with new interface checks
-2. Extend `GetAllRequestInfo()` or `GetHandlerInfo()` as needed
-3. Add new handler types to `FindHandlersInProject()`/`FindNotificationHandlersInProject()`
+**Release flow:**
+1. Bump `Version` in `source.extension.vsixmanifest` on your feature branch.
+2. Open PR → `pr-validation.yml` runs and enforces the version bump.
+3. Merge to `main` → `build-and-publish.yml` creates the GitHub Release automatically.
+4. Optionally publish the release → `marketplace-publish.yml` pushes to the marketplace.
 
-#### Adding New Commands
-1. Define command ID in `VSIXExtentionPackage.cs`
-2. Add command definition to `VSPackage.vsct`
-3. Register in `RegisterCommandsAsync()`
-4. Implement in `MediatRCommandHandler.cs`
-5. Add context detection to `MediatRContextService.cs`
+---
 
-#### Improving Performance
-1. Add negative caching to `MediatRHandlerFinder`
-2. Implement project-level MediatR detection
-3. Add background pre-indexing
-4. Optimize syntax tree filtering
+## Common Pitfalls
 
-### 7. Debugging & Diagnostics
+| Pitfall | Correct approach |
+|---|---|
+| `.Result` or `.Wait()` on async calls | `await` everywhere; use `JoinableTaskFactory.Run()` only at the outermost sync boundary |
+| UI operations from background thread | `await SwitchToMainThreadAsync()` before any DTE/dialog/statusbar call |
+| `ConfigureAwait(false)` | Never — VS threading model requires joinable task context |
+| String-only type comparison | Use `AreTypesEqual()` (3-tier: symbol → display string → metadata+assembly) |
+| Assuming one interface per class | Always call `GetAllRequestInfo()` — a class can implement both `IRequest` and `INotification` |
+| Ignoring cancellation tokens | Pass `CancellationToken` through every async method |
+| Processing non-C# / non-MediatR projects | Check `IsValidContext()` and MediatR availability before any semantic work |
+| Changing manifest identity fields | `Publisher`, `Id`, and the GUID are the marketplace identity — never change them |
+| Forgetting to bump the version | The PR will fail — bump `Version` in `source.extension.vsixmanifest` first |
 
-#### Debug Output
-- All services write to Debug output with consistent prefixes
-- Use `System.Diagnostics.Debug.WriteLine()`
-- Format: `"MediatRNavigationExtension: [ServiceName]: [Message]"`
+---
 
-#### Common Issues
-- **Commands not appearing**: Check context detection logic
-- **Navigation fails**: Verify file paths and locations
-- **Performance issues**: Check if MediatR scoping is working
-- **Threading exceptions**: Ensure proper UI thread switching
+## Debugging
 
-#### Diagnostic Tools
-- VS Output window (Debug category)
-- Experimental instance debugging
-- Roslyn syntax visualizers
-- VS SDK tools
-
-## Conclusion
-
-This extension provides a sophisticated MediatR navigation experience using modern Roslyn APIs and VS SDK patterns. The architecture is designed for maintainability, performance, and extensibility. When making changes, always prioritize correctness and user experience over implementation complexity.
-
-The roadmap provides a clear path forward, with Phase 1 items being critical for production quality. Focus on completing high-priority items before adding new features.
-
-For questions or clarifications, refer to the existing code patterns and this document. The extension follows established VS SDK conventions and should serve as a good reference for similar navigation extensions.
+- **Output window:** All services write to `Debug` output with the `MediatRNavigationExtension:` prefix — filter by this in the VS Output window.
+- **Experimental instance:** Launch with `devenv.exe /rootsuffix Exp` (configured in the project debug settings).
+- **Commands not appearing:** Check `BeforeQueryStatus` logic and the corresponding `IsIn*ContextAsync` method.
+- **Navigation lands on wrong line:** Verify `GetHandlerInfo()` is resolving the `Handle` method location via `FindImplementationForInterfaceMember`, not the class declaration.
+- **Performance slow on large solutions:** Confirm MediatR project scoping is active (`GetTypeByMetadataName("MediatR.IRequest") == null` early exit).
+- **Threading exceptions:** Ensure `SwitchToMainThreadAsync()` is called before any UI/DTE operation.

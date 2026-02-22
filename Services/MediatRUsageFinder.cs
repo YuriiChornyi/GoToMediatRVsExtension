@@ -127,19 +127,19 @@ namespace VSIXExtention.Services
                 // Get context information
                 var location = invocation.GetLocation();
                 var containingMethod = GetContainingMethod(invocation);
-                var containingClass = GetContainingClass(invocation);
+                var containingType = GetContainingType(invocation);
 
                 var usageInfo = new MediatRUsageInfo
                 {
                     RequestTypeName = requestTypeSymbol.Name,
                     MethodName = containingMethod?.Identifier.ValueText ?? "Unknown",
-                    ClassName = containingClass?.Identifier.ValueText ?? "Unknown",
+                    ClassName = containingType?.Identifier.ValueText ?? "Unknown",
                     FilePath = location.SourceTree?.FilePath ?? "Unknown",
                     LineNumber = location.GetLineSpan().StartLinePosition.Line + 1,
                     Location = location,
                     IsNotificationUsage = isNotification,
                     UsageType = methodName,
-                    ContextDescription = CreateContextDescription(containingMethod, containingClass)
+                    ContextDescription = CreateContextDescription(containingMethod, containingType)
                 };
 
                 return usageInfo;
@@ -347,20 +347,20 @@ namespace VSIXExtention.Services
             return node.Ancestors().OfType<MethodDeclarationSyntax>().FirstOrDefault();
         }
 
-        private TypeDeclarationSyntax GetContainingClass(SyntaxNode node)
+        private TypeDeclarationSyntax GetContainingType(SyntaxNode node)
         {
             return node.Ancestors().OfType<TypeDeclarationSyntax>().FirstOrDefault();
         }
 
-        private string CreateContextDescription(MethodDeclarationSyntax method, TypeDeclarationSyntax containingClass)
+        private string CreateContextDescription(MethodDeclarationSyntax method, TypeDeclarationSyntax containingType)
         {
-            if (method == null || containingClass == null)
+            if (method == null || containingType == null)
                 return "Unknown context";
 
             var methodName = method.Identifier.ValueText;
-            var className = containingClass.Identifier.ValueText;
+            var typeName = containingType.Identifier.ValueText;
 
-            return $"{methodName}() method in {className}";
+            return $"{methodName}() method in {typeName}";
         }
     }
 } 

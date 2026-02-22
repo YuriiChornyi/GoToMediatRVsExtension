@@ -1,130 +1,94 @@
-name: Build and Test MediatR Extension
+name: Release on Push to Main
 
 on:
   push:
     branches: [ main ]
-    tags: [ 'v*' ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
-
-env:
-  SOLUTION_FILE: VSIXExtention.sln
-  BUILD_CONFIGURATION: Release
-  BUILD_PLATFORM: Any CPU
 
 jobs:
-  build:
+  release:
     runs-on: windows-latest
-    
-    outputs:
-      version: ${{ steps.get-version.outputs.version }}
-      vsix-path: ${{ steps.build.outputs.vsix-path }}
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0 # Fetch full history for version calculation
-    
-    - name: Setup .NET Framework
+        fetch-depth: 0
+
+    - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
       with:
         msbuild-architecture: x64
-    
+
     - name: Setup NuGet
       uses: NuGet/setup-nuget@v2
       with:
         nuget-version: 'latest'
-    
+
     - name: Restore NuGet packages
-      run: nuget restore ${{ env.SOLUTION_FILE }}
-    
-    - name: Get version from manifest
-      id: get-version
+      run: nuget restore VSIXExtention.sln
+
+    - name: Build solution
+      shell: powershell
+      run: |
+        msbuild VSIXExtention.sln /p:Configuration=Release /p:Platform="Any CPU" /p:DeployExtension=false /p:ZipPackageCompressionLevel=normal /v:minimal
+
+        $vsixFile = Get-ChildItem -Path "." -Filter "*.vsix" -Recurse |
+            Where-Object { $_.Directory.Name -eq "Release" } |
+            Select-Object -First 1
+
+        if (-not $vsixFile) {
+            Write-Error "VSIX file not found after build!"
+            exit 1
+        }
+
+        echo "VSIX_PATH=$($vsixFile.FullName)" >> $env:GITHUB_ENV
+        echo "VSIX_NAME=$($vsixFile.Name)" >> $env:GITHUB_ENV
+        Write-Host "VSIX ready: $($vsixFile.FullName)"
+
+    - name: Read version from manifest
+      id: version
       shell: powershell
       run: |
         [xml]$manifest = Get-Content "source.extension.vsixmanifest"
         $version = $manifest.PackageManifest.Metadata.Identity.Version
-        echo "version=$version" >> $env:GITHUB_OUTPUT
-        echo "Extension version: $version"
-    
-    - name: Build solution
-      id: build
+        echo "value=$version" >> $env:GITHUB_OUTPUT
+        Write-Host "Version: $version"
+
+    - name: Collect commit messages since last release
+      id: notes
       shell: powershell
       run: |
-        Write-Host "Building solution..."
-        msbuild ${{ env.SOLUTION_FILE }} /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform="${{ env.BUILD_PLATFORM }}" /p:DeployExtension=false /p:ZipPackageCompressionLevel=normal /v:minimal
-        
-        # Find the generated VSIX file
-        $vsixFile = Get-ChildItem -Path "bin\${{ env.BUILD_CONFIGURATION }}" -Filter "*.vsix" -Recurse | Select-Object -First 1
-        if ($vsixFile) {
-            $vsixPath = $vsixFile.FullName
-            echo "vsix-path=$vsixPath" >> $env:GITHUB_OUTPUT
-            echo "VSIX file found: $vsixPath"
+        $latestTag = git tag --list "v*" --sort=-version:refname | Select-Object -First 1
+
+        if ($latestTag) {
+            Write-Host "Collecting commits since tag: $latestTag"
+            $commits = git log "$latestTag..HEAD" --pretty=format:"- %s" --no-merges
         } else {
-            Write-Error "VSIX file not found!"
-            exit 1
+            Write-Host "No previous tags found — using all commits"
+            $commits = git log --pretty=format:"- %s" --no-merges
         }
-    
-    - name: Upload VSIX artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: vsix-package
-        path: ${{ steps.build.outputs.vsix-path }}
-        retention-days: 90
-    
-    - name: Upload build logs on failure
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-logs
-        path: |
-          **/*.log
-          **/obj/**/*.cache
-        retention-days: 7
 
-  test:
-    runs-on: windows-latest
-    needs: build
-    if: success()
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Download VSIX artifact
-      uses: actions/download-artifact@v4
+        if (-not $commits) {
+            $commits = "- Initial release"
+        }
+
+        # Write to file to avoid multiline env var issues
+        $commits | Out-File -FilePath "release-notes.md" -Encoding UTF8
+        Write-Host "Release notes:`n$commits"
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
       with:
-        name: vsix-package
-        path: ./artifacts
-    
-    - name: Test VSIX installation
+        tag_name: v${{ steps.version.outputs.value }}
+        name: MediatR Navigation Extension v${{ steps.version.outputs.value }}
+        body_path: release-notes.md
+        draft: false
+        prerelease: false
+        files: ${{ env.VSIX_PATH }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Clean up
+      if: always()
       shell: powershell
-      run: |
-        Write-Host "Testing VSIX package integrity..."
-        
-        # Find the VSIX file
-        $vsixFile = Get-ChildItem -Path "./artifacts" -Filter "*.vsix" | Select-Object -First 1
-        if (-not $vsixFile) {
-            Write-Error "VSIX file not found in artifacts!"
-            exit 1
-        }
-        
-        # Test VSIX file integrity (it's essentially a ZIP file)
-        try {
-            Add-Type -AssemblyName System.IO.Compression.FileSystem
-            $zip = [System.IO.Compression.ZipFile]::OpenRead($vsixFile.FullName)
-            $entryCount = $zip.Entries.Count
-            $zip.Dispose()
-            Write-Host "VSIX contains $entryCount entries - integrity check passed"
-        } catch {
-            Write-Error "VSIX integrity check failed: $($_.Exception.Message)"
-            exit 1
-        }
-
-  # Note: Marketplace publishing is handled by marketplace-publish.yml workflow
-  # This workflow focuses on building and testing only
-
-  # Note: GitHub releases are created by version-bump.yml workflow
-  # This workflow is for CI/CD building and testing only
+      run: Remove-Item "release-notes.md" -ErrorAction SilentlyContinue

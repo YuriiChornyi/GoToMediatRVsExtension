@@ -283,8 +283,8 @@ namespace VSIXExtention
                 }
 
                 // "Go to MediatR Send/Publish" should show when:
-                // 1. On Handler class or Handle method (original behavior)
-                // 2. On nested MediatR call inside handler class (new behavior for mixed context)
+                // 1. On Handler type (class/record) or Handle method (original behavior)
+                // 2. On nested MediatR call inside handler type (new behavior for mixed context)
                 // Performance optimization: check cheaper condition first
                 bool isInHandlerContext = await _mediatRContextService.IsInMediatRHandlerContextAsync(textView);
                 bool isInNestedCallContext = !isInHandlerContext && await _mediatRContextService.IsInNestedMediatRCallInHandlerContextAsync(textView);
