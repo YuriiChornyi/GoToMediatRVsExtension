@@ -34,15 +34,13 @@ jobs:
     - name: Check version was bumped
       shell: powershell
       run: |
-        # Read version from manifest
         [xml]$manifest = Get-Content "source.extension.vsixmanifest"
         $prVersion = $manifest.PackageManifest.Metadata.Identity.Version
         Write-Host "Version in this PR: $prVersion"
 
-        # Get the latest git tag (vX.Y or vX.Y.Z)
         $latestTag = git tag --list "v*" --sort=-version:refname | Select-Object -First 1
         if (-not $latestTag) {
-            Write-Host "No existing release tags found — version check skipped."
+            Write-Host "No existing release tags found, version check skipped."
             exit 0
         }
 
@@ -50,8 +48,8 @@ jobs:
         Write-Host "Latest released version (from tag): $tagVersion"
 
         if ($prVersion -eq $tagVersion) {
-            Write-Error "Version '$prVersion' in source.extension.vsixmanifest has not been bumped. Please update the version before merging."
+            Write-Error "Version $prVersion in source.extension.vsixmanifest has not been bumped. Please update the version before merging."
             exit 1
         }
 
-        Write-Host "Version bump confirmed: $tagVersion -> $prVersion"
+        Write-Host "Version bump confirmed: $tagVersion to $prVersion"
