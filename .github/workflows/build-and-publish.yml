@@ -4,6 +4,9 @@ on:
   push:
     branches: [ main ]
 
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: windows-latest
@@ -78,17 +81,24 @@ jobs:
         Write-Host "Release notes:"
         Write-Host $commits
 
+    - name: Create git tag
+      shell: powershell
+      run: |
+        $tag = "v${{ steps.version.outputs.value }}"
+        git tag $tag
+        git push origin $tag
+        Write-Host "Tag created and pushed: $tag"
+
     - name: Create GitHub Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: v${{ steps.version.outputs.value }}
-        name: MediatR Navigation Extension v${{ steps.version.outputs.value }}
-        body_path: release-notes.md
-        draft: false
-        prerelease: false
-        files: ${{ env.VSIX_PATH }}
+      shell: powershell
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        $tag = "v${{ steps.version.outputs.value }}"
+        $name = "MediatR Navigation Extension $tag"
+        $vsix = $env:VSIX_PATH
+
+        gh release create $tag $vsix --title $name --notes-file release-notes.md
 
     - name: Clean up
       if: always()
