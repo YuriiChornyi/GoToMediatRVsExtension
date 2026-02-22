@@ -62,19 +62,21 @@ jobs:
 
         if ($latestTag) {
             Write-Host "Collecting commits since tag: $latestTag"
-            $commits = git log "$latestTag..HEAD" --pretty=format:"- %s" --no-merges
+            $allCommits = git log "$latestTag..HEAD" --pretty=format:"- %s" --no-merges
         } else {
-            Write-Host "No previous tags found — using all commits"
-            $commits = git log --pretty=format:"- %s" --no-merges
+            Write-Host "No previous tags found, using all commits"
+            $allCommits = git log --pretty=format:"- %s" --no-merges
         }
+
+        $commits = $allCommits | Where-Object { $_ -notmatch "^- Merge pull request" }
 
         if (-not $commits) {
             $commits = "- Initial release"
         }
 
-        # Write to file to avoid multiline env var issues
         $commits | Out-File -FilePath "release-notes.md" -Encoding UTF8
-        Write-Host "Release notes:`n$commits"
+        Write-Host "Release notes:"
+        Write-Host $commits
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
