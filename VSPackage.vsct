@@ -54,6 +54,13 @@
           <CommandName>Go to MediatR Send/Publish</CommandName>
         </Strings>
       </Button>
+      <Button guid="guidVSIXExtentionPackageCmdSet" id="CodeLensNavigateCommandId" priority="0x0500" type="Button">
+        <CommandFlag>DynamicVisibility</CommandFlag>
+        <CommandFlag>DefaultInvisible</CommandFlag>
+        <Strings>
+          <ButtonText>MediatR CodeLens Navigate</ButtonText>
+        </Strings>
+      </Button>
     </Buttons>
   </Commands>
 
@@ -74,6 +81,7 @@
       <IDSymbol name="GoToMediatRImplementationContextCommandId" value="0x0102" />
       <IDSymbol name="GoToMediatRUsageCommandId" value="0x0103" />
       <IDSymbol name="GoToMediatRUsageContextCommandId" value="0x0104" />
+      <IDSymbol name="CodeLensNavigateCommandId" value="0x0105" />
     </GuidSymbol>
   </Symbols>
 </CommandTable> 
