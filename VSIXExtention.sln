@@ -1,15 +1,15 @@
-
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36127.28
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VSIXExtention", "VSIXExtention.csproj", "{B0B3D7CA-3205-4C0E-8B68-71D421005ED5}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VSIXExtension", "VSIXExtension.csproj", "{B0B3D7CA-3205-4C0E-8B68-71D421005ED5}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CodeLensOopProvider", "CodeLensOopProvider\CodeLensOopProvider.csproj", "{F1A2B3C4-D5E6-4F78-9ABC-DEF012345678}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{8EC462FD-D22E-90A8-E5CE-7E832BA40C5D}"
 	ProjectSection(SolutionItems) = preProject
 		.gitignore = .gitignore
+		CURSOR_PROJECT_GUIDELINES.md = CURSOR_PROJECT_GUIDELINES.md
 		README.md = README.md
 	EndProjectSection
 EndProject

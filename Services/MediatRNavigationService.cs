@@ -1,12 +1,12 @@
+using Microsoft.CodeAnalysis;
+using Microsoft.VisualStudio.Shell;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Microsoft.CodeAnalysis;
-using Microsoft.VisualStudio.Shell;
-using VSIXExtention.Models;
+using VSIXExtension.Models;
 
-namespace VSIXExtention.Services
+namespace VSIXExtension.Services
 {
     public enum NavigationFailureReason
     {
@@ -63,13 +63,13 @@ namespace VSIXExtention.Services
 
             // Multiple handlers - show selection dialog
             var result = await NavigateToMultipleHandlersAsync(handlers);
-            
+
             // Handle cancellation vs failure differently
             if (result == null) // Cancellation
             {
                 return true; // Don't show error for cancellation
             }
-            
+
             return result ?? false;
         }
 
@@ -98,13 +98,13 @@ namespace VSIXExtention.Services
 
             // Multiple usages - show selection dialog
             var result = await NavigateToMultipleUsagesAsync(usages, requestTypeName);
-            
+
             // Handle cancellation vs failure differently
             if (result == null) // Cancellation
             {
                 return true; // Don't show error for cancellation
             }
-            
+
             return result ?? false;
         }
 
@@ -118,19 +118,19 @@ namespace VSIXExtention.Services
 
             var filePath = location.SourceTree.FilePath;
             var lineSpan = location.GetLineSpan();
-            
+
             System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: Navigating to {filePath} at line {lineSpan.StartLinePosition.Line + 1}");
-            
+
             // Check if file exists first
             if (!System.IO.File.Exists(filePath))
             {
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: File not found: {filePath}");
                 return NavigationResult.CreateFailure(NavigationFailureReason.FileNotFound, $"File not found: {filePath}");
             }
-            
+
             var success = await OpenDocumentAndNavigate(filePath, lineSpan.StartLinePosition);
             System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: Navigation result: {success}");
-            
+
             if (success)
             {
                 return NavigationResult.CreateSuccess();
@@ -163,13 +163,13 @@ namespace VSIXExtention.Services
                     // Mixed types - provide detailed information
                     var requestTypeName = handlers.First().RequestTypeName;
                     message = $"Multiple handlers found for '{requestTypeName}':\n";
-                    
+
                     foreach (var group in handlerGroups)
                     {
                         var handlerTypeName = GetHandlerTypeDisplayName(group.Key);
                         var count = group.Count();
                         message += $"• {count} {handlerTypeName}";
-                        
+
                         // Add exception type info for exception handlers
                         if (group.Key == MediatRHandlerType.RequestExceptionHandler || group.Key == MediatRHandlerType.RequestExceptionAction)
                         {
@@ -191,7 +191,7 @@ namespace VSIXExtention.Services
                 }
 
                 var selectedHandlerName = _uiService.ShowHandlerSelectionDialog(handlerDisplayInfo, message);
-                
+
                 if (selectedHandlerName == null)
                 {
                     return null; // User cancelled
@@ -243,7 +243,7 @@ namespace VSIXExtention.Services
                 {
                     // Mixed types - provide detailed information
                     message = $"Multiple usages found for '{requestTypeName}':\n";
-                    
+
                     if (sendUsages.Any())
                     {
                         message += $"• {sendUsages.Count} Send usage(s)\n";
@@ -262,7 +262,7 @@ namespace VSIXExtention.Services
                 }
 
                 var selectedUsageName = _uiService.ShowUsageSelectionDialog(usageDisplayInfo, message);
-                
+
                 if (selectedUsageName == null)
                 {
                     return null; // User cancelled
@@ -409,7 +409,7 @@ namespace VSIXExtention.Services
             try
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                
+
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: Attempting to open file: {filePath} at line {linePosition.Line + 1}");
 
                 var dte = _serviceProvider.GetService(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
@@ -427,7 +427,7 @@ namespace VSIXExtention.Services
                     System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRNavigationService: Successfully navigated to {filePath} at line {linePosition.Line + 1}");
                     return true;
                 }
-                
+
                 // Alternative approach if the above fails
                 if (window?.Document != null)
                 {
@@ -453,4 +453,4 @@ namespace VSIXExtention.Services
             }
         }
     }
-} 
+}

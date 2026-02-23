@@ -1,10 +1,3 @@
-using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.ComponentModel.Composition;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.VisualStudio.ComponentModelHost;
@@ -12,10 +5,16 @@ using Microsoft.VisualStudio.Language.CodeLens;
 using Microsoft.VisualStudio.LanguageServices;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Utilities;
-using VSIXExtention.Models;
-using VSIXExtention.Options;
+using System;
+using System.Collections.Concurrent;
+using System.ComponentModel.Composition;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using VSIXExtension.Models;
+using VSIXExtension.Options;
 
-namespace VSIXExtention.Services
+namespace VSIXExtension.Services
 {
     [Export(typeof(ICodeLensCallbackListener))]
     [PartCreationPolicy(CreationPolicy.Shared)]
@@ -29,6 +28,9 @@ namespace VSIXExtention.Services
 
         private readonly ConcurrentDictionary<string, (MediatRCodeLensResult result, VersionStamp solutionVersion)> _cache
             = new ConcurrentDictionary<string, (MediatRCodeLensResult, VersionStamp)>();
+
+        private readonly ConcurrentDictionary<string, (MediatRCodeLensDetailResult result, VersionStamp solutionVersion)> _detailCache
+            = new ConcurrentDictionary<string, (MediatRCodeLensDetailResult, VersionStamp)>();
 
         public CodeLensCallbackService()
         {
@@ -83,6 +85,9 @@ namespace VSIXExtention.Services
         {
             System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: GetMediatRCodeLensData called — file='{filePath}', element='{elementDescription}', kind='{kind}'");
 
+            if (!IsCodeLensEnabled())
+                return new MediatRCodeLensResult { IsMediatRType = false };
+
             try
             {
                 var workspace = GetWorkspace();
@@ -117,6 +122,15 @@ namespace VSIXExtention.Services
                 {
                     System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: Symbol not found for '{elementDescription}' (kind={kind}) in '{filePath}'");
                     return CacheAndReturn(cacheKey, new MediatRCodeLensResult { IsMediatRType = false }, currentVersion);
+                }
+
+                // Reuse result if the same type was already computed from another CodeLens entry
+                var typeKey = GetTypeKey(typeSymbol);
+                if (_cache.TryGetValue(typeKey, out var typeCached) && typeCached.solutionVersion == currentVersion)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: Cache hit (type) for '{typeSymbol.ToDisplayString()}'");
+                    _cache[cacheKey] = typeCached;
+                    return typeCached.result;
                 }
 
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: Found type symbol '{typeSymbol.ToDisplayString()}' for '{elementDescription}'");
@@ -163,6 +177,7 @@ namespace VSIXExtention.Services
                     System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: Handler '{elementDescription}' => {result.Description}");
                 }
 
+                _cache[typeKey] = (result, currentVersion);
                 return CacheAndReturn(cacheKey, result, currentVersion);
             }
             catch (Exception ex)
@@ -176,11 +191,16 @@ namespace VSIXExtention.Services
         {
             System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: GetMediatRCodeLensDetails called — file='{filePath}', element='{elementDescription}', kind='{kind}'");
 
+            if (!IsCodeLensEnabled())
+                return new MediatRCodeLensDetailResult();
+
             try
             {
                 var workspace = GetWorkspace();
                 if (workspace?.CurrentSolution == null)
                     return new MediatRCodeLensDetailResult();
+
+                var currentVersion = workspace.CurrentSolution.Version;
 
                 bool isMethodKind = string.Equals(kind, "method", StringComparison.OrdinalIgnoreCase);
                 var typeSymbol = isMethodKind
@@ -188,6 +208,13 @@ namespace VSIXExtention.Services
                     : await FindTypeSymbolAsync(workspace, filePath, elementDescription);
                 if (typeSymbol == null)
                     return new MediatRCodeLensDetailResult();
+
+                var typeKey = GetTypeKey(typeSymbol);
+                if (_detailCache.TryGetValue(typeKey, out var cached) && cached.solutionVersion == currentVersion)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: Detail cache hit for '{typeSymbol.ToDisplayString()}'");
+                    return cached.result;
+                }
 
                 var detailResult = new MediatRCodeLensDetailResult();
                 bool isRequest = MediatRPatternMatcher.IsMediatRRequest(typeSymbol, null);
@@ -242,6 +269,8 @@ namespace VSIXExtention.Services
                         });
                     }
                 }
+
+                _detailCache[typeKey] = (detailResult, currentVersion);
 
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: GetMediatRCodeLensDetails returning {detailResult.Entries.Count} entries for '{elementDescription}'");
                 return detailResult;
@@ -301,6 +330,8 @@ namespace VSIXExtention.Services
             return null;
         }
 
+        private static readonly string[] HandlerMethodNames = { "Handle", "Execute" };
+
         private async Task<INamedTypeSymbol> FindContainingHandlerTypeFromMethodAsync(
             VisualStudioWorkspace workspace, string filePath, string elementDescription)
         {
@@ -320,37 +351,64 @@ namespace VSIXExtention.Services
 
                 var root = await syntaxTree.GetRootAsync();
 
-                foreach (var methodDecl in root.DescendantNodes().OfType<MethodDeclarationSyntax>())
+                // Type-first approach: find handler types, then match methods inside them
+                foreach (var typeDecl in root.DescendantNodes().OfType<TypeDeclarationSyntax>())
                 {
-                    var methodSymbol = semanticModel.GetDeclaredSymbol(methodDecl) as IMethodSymbol;
-                    if (methodSymbol == null) continue;
+                    var typeSymbol = semanticModel.GetDeclaredSymbol(typeDecl) as INamedTypeSymbol;
+                    if (typeSymbol == null) continue;
 
-                    var methodDisplay = methodSymbol.ToDisplayString();
-                    var methodMetadata = methodSymbol.ContainingType != null
-                        ? $"{methodSymbol.ContainingType.ToDisplayString()}.{methodSymbol.Name}"
-                        : methodSymbol.Name;
+                    if (!MediatRPatternMatcher.IsMediatRHandler(typeSymbol, null))
+                        continue;
 
-                    bool matches = methodSymbol.Name == elementDescription
-                        || methodDisplay == elementDescription
-                        || methodMetadata == elementDescription
-                        || elementDescription.Contains($".{methodSymbol.Name}(");
-
-                    if (!matches) continue;
-
-                    var containingType = methodSymbol.ContainingType;
-                    if (containingType == null) continue;
-
-                    bool isHandler = MediatRPatternMatcher.IsMediatRHandler(containingType, null);
-                    if (isHandler)
+                    foreach (var methodDecl in typeDecl.Members.OfType<MethodDeclarationSyntax>())
                     {
-                        System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: FindContainingHandlerTypeFromMethod — MATCHED method '{elementDescription}' => handler type '{containingType.ToDisplayString()}'");
-                        return containingType;
+                        var methodName = methodDecl.Identifier.ValueText;
+                        if (!HandlerMethodNames.Contains(methodName))
+                            continue;
+
+                        var methodSymbol = semanticModel.GetDeclaredSymbol(methodDecl) as IMethodSymbol;
+                        if (methodSymbol == null) continue;
+
+                        if (MethodMatchesDescription(methodSymbol, elementDescription))
+                        {
+                            System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: FindContainingHandlerTypeFromMethod — MATCHED method '{elementDescription}' => handler type '{typeSymbol.ToDisplayString()}'");
+                            return typeSymbol;
+                        }
                     }
                 }
             }
 
             System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: FindContainingHandlerTypeFromMethod — no handler match for '{elementDescription}'");
             return null;
+        }
+
+        private static bool MethodMatchesDescription(IMethodSymbol methodSymbol, string elementDescription)
+        {
+            if (methodSymbol.Name == elementDescription)
+                return true;
+
+            var methodDisplay = methodSymbol.ToDisplayString();
+            if (methodDisplay == elementDescription)
+                return true;
+
+            var methodMetadata = methodSymbol.ContainingType != null
+                ? $"{methodSymbol.ContainingType.ToDisplayString()}.{methodSymbol.Name}"
+                : methodSymbol.Name;
+            if (methodMetadata == elementDescription)
+                return true;
+
+            if (elementDescription.Contains($".{methodSymbol.Name}("))
+                return true;
+
+            if (elementDescription.EndsWith($".{methodSymbol.Name}"))
+                return true;
+
+            return false;
+        }
+
+        private static string GetTypeKey(INamedTypeSymbol typeSymbol)
+        {
+            return $"type:{typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}";
         }
 
         private WorkspaceService CreateTempWorkspaceService(VisualStudioWorkspace workspace)
@@ -386,7 +444,11 @@ namespace VSIXExtention.Services
             }
 
             _ = Task.Delay(TimeSpan.FromSeconds(delaySeconds), token)
-                .ContinueWith(_ => _cache.Clear(), CancellationToken.None, TaskContinuationOptions.NotOnCanceled, TaskScheduler.Default);
+                .ContinueWith(_ =>
+                {
+                    _cache.Clear();
+                    _detailCache.Clear();
+                }, CancellationToken.None, TaskContinuationOptions.NotOnCanceled, TaskScheduler.Default);
         }
 
         public void Dispose()

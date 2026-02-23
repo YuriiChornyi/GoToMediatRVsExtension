@@ -6,7 +6,7 @@
         <ProjectType>CSharp</ProjectType>
                 <DefaultName>Notification.cs</DefaultName>
         <Icon>MediatRTemplate.ico</Icon>
-        <TemplateID>VSIXExtention.MediatRNotification</TemplateID>
+        <TemplateID>VSIXExtension.MediatRNotification</TemplateID>
         <SortOrder>1002</SortOrder>
         <CreateNewFolder>false</CreateNewFolder>
     </TemplateData>

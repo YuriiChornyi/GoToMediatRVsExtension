@@ -1,7 +1,4 @@
-﻿using System;
-using System.Linq;
-using System.Threading.Tasks;
-using Microsoft.CodeAnalysis;
+﻿using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Host;
 using Microsoft.VisualStudio.ComponentModelHost;
 using Microsoft.VisualStudio.LanguageServices;
@@ -9,8 +6,11 @@ using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.TextManager.Interop;
+using System;
+using System.Linq;
+using System.Threading.Tasks;
 
-namespace VSIXExtention.Services
+namespace VSIXExtension.Services
 {
     public class WorkspaceService : IWorkspaceService, IDisposable
     {
@@ -21,15 +21,15 @@ namespace VSIXExtention.Services
         public WorkspaceService()
         {
             // Lazy initialization as fallback - will be called on first access if not explicitly set
-            _lazyWorkspace = new Lazy<VisualStudioWorkspace>(() => 
+            _lazyWorkspace = new Lazy<VisualStudioWorkspace>(() =>
             {
                 try
                 {
                     ThreadHelper.ThrowIfNotOnUIThread();
-                    
+
                     var componentModel = ServiceProvider.GlobalProvider?.GetService(typeof(SComponentModel)) as IComponentModel;
                     var workspace = componentModel?.GetService<VisualStudioWorkspace>();
-                    
+
                     System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: WorkspaceService: Lazy-initialized workspace: {workspace != null}");
                     return workspace;
                 }

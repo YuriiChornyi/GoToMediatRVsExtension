@@ -1,5 +1,4 @@
 using Community.VisualStudio.Toolkit;
-using Microsoft.VisualStudio;
 using Microsoft.VisualStudio.ComponentModelHost;
 using Microsoft.VisualStudio.Editor;
 using Microsoft.VisualStudio.Shell;
@@ -11,20 +10,20 @@ using System.ComponentModel.Design;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
-using VSIXExtention.Options;
-using VSIXExtention.Services;
+using VSIXExtension.Options;
+using VSIXExtension.Services;
 
-namespace VSIXExtention
+namespace VSIXExtension
 {
     /// <summary>
     /// MediatR VS Extension Package with clean architecture
     /// </summary>
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
-    [Guid(VSIXExtentionPackage.PackageGuidString)]
+    [Guid(VSIXExtensionPackage.PackageGuidString)]
     [ProvideMenuResource("Menus.ctmenu", 1)]
     [ProvideAutoLoad(UIContextGuids80.SolutionExists, PackageAutoLoadFlags.BackgroundLoad)]
     [ProvideOptionPage(typeof(MediatRNavigationOptionsPage), "MediatR Navigation", "General", 0, 0, true)]
-    public sealed class VSIXExtentionPackage : AsyncPackage
+    public sealed class VSIXExtensionPackage : AsyncPackage
     {
         public const string PackageGuidString = "cf38f10f-fa64-4c4b-9ebc-6d7d897607ea";
         public static readonly Guid CommandSet = new Guid("cf38f10f-fa64-4c4b-9ebc-6d7d897607eb");
@@ -38,7 +37,7 @@ namespace VSIXExtention
         private readonly MediatRContextService _mediatRContextService;
         private readonly WorkspaceService _workspaceService;
 
-        public VSIXExtentionPackage()
+        public VSIXExtensionPackage()
         {
             _workspaceService = new WorkspaceService();
             _mediatRCommandHandler = new MediatRCommandHandler(_workspaceService);
@@ -62,7 +61,7 @@ namespace VSIXExtention
                 {
                     var vsWorkspace = componentModel.GetService<Microsoft.VisualStudio.LanguageServices.VisualStudioWorkspace>();
                     _workspaceService.SetWorkspace(vsWorkspace);
-                    
+
                     System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Package: Workspace acquired: {vsWorkspace != null}");
                 }
                 else

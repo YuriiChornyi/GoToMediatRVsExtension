@@ -7,7 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 
-namespace VSIXExtention.Helpers
+namespace VSIXExtension.Helpers
 {
     public class RoslynSymbolHelper
     {

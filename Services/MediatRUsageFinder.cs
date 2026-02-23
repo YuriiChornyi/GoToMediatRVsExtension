@@ -1,15 +1,15 @@
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Operations;
-using VSIXExtention.Models;
+using VSIXExtension.Models;
 
-namespace VSIXExtention.Services
+namespace VSIXExtension.Services
 {
     public class MediatRUsageFinder
     {
@@ -66,7 +66,7 @@ namespace VSIXExtention.Services
                 });
 
             var projectResults = await Task.WhenAll(projectTasks);
-            
+
             foreach (var projectUsages in projectResults)
             {
                 usages.AddRange(projectUsages);
@@ -160,7 +160,7 @@ namespace VSIXExtention.Services
             if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
             {
                 methodName = memberAccess.Name.Identifier.ValueText;
-                
+
                 // Check if it's a Send or Publish method
                 if (SendMethods.Contains(methodName))
                 {
@@ -187,7 +187,7 @@ namespace VSIXExtention.Services
                 if (symbol != null)
                 {
                     ITypeSymbol typeSymbol = null;
-                    
+
                     // Handle different types of symbols
                     switch (symbol)
                     {
@@ -316,12 +316,12 @@ namespace VSIXExtention.Services
         {
             // Try 1: Standard comparison
             if (SymbolEqualityComparer.Default.Equals(type1, type2)) return true;
-            
+
             // Try 2: Fully qualified names
             if (type1.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == type2.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)) return true;
-            
+
             // Try 3: Metadata + assembly (most robust)
-            return GetMetadataName(type1) == GetMetadataName(type2) && 
+            return GetMetadataName(type1) == GetMetadataName(type2) &&
                    type1.ContainingAssembly?.Name == type2.ContainingAssembly?.Name;
         }
 
@@ -332,13 +332,13 @@ namespace VSIXExtention.Services
                 // Nested type
                 return GetMetadataName(type.ContainingType) + "+" + type.MetadataName;
             }
-            
+
             var namespaceName = type.ContainingNamespace?.ToDisplayString();
             if (string.IsNullOrEmpty(namespaceName) || namespaceName == "<global namespace>")
             {
                 return type.MetadataName;
             }
-            
+
             return namespaceName + "." + type.MetadataName;
         }
 
@@ -363,4 +363,4 @@ namespace VSIXExtention.Services
             return $"{methodName}() method in {typeName}";
         }
     }
-} 
+}

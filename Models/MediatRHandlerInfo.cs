@@ -1,6 +1,6 @@
 ﻿using Microsoft.CodeAnalysis;
 
-namespace VSIXExtention.Models
+namespace VSIXExtension.Models
 {
     public enum MediatRHandlerType
     {
@@ -20,7 +20,7 @@ namespace VSIXExtention.Models
         public INamedTypeSymbol HandlerSymbol { get; set; }
         public Location Location { get; set; }
         public bool IsNotificationHandler { get; set; }
-        
+
         // New properties for extended handler types
         public MediatRHandlerType HandlerType { get; set; }
         public string ExceptionTypeName { get; set; }

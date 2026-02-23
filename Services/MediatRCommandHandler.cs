@@ -1,16 +1,15 @@
-using System;
-using System.Linq;
-using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Microsoft.CodeAnalysis.Host;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Text.Editor;
+using System;
+using System.Linq;
+using System.Threading.Tasks;
 
-namespace VSIXExtention.Services
+namespace VSIXExtension.Services
 {
-    public class MediatRCommandHandler 
+    public class MediatRCommandHandler
     {
         private readonly MediatRContextService _contextService;
         private readonly NavigationUiService _uiService;
@@ -37,7 +36,7 @@ namespace VSIXExtention.Services
                 using (var progress = await _uiService.ShowProgressAsync("Searching for MediatR handlers...", "Finding handlers in solution"))
                 {
                     progress.Report(0.1, "Analyzing current position...");
-                    
+
                     // Step 1: Determine the request type to navigate to (handles both direct requests and nested calls)
                     cancellationToken.ThrowIfCancellationRequested();
                     var targetRequestType = await GetTargetRequestTypeForImplementation(textView, position);
@@ -54,27 +53,27 @@ namespace VSIXExtention.Services
                     }
 
                     progress.Report(0.3, "Getting semantic model...");
-                    
+
                     // Step 2: Get semantic model for the document
                     var document = _workspaceService.GetDocumentFromTextView(textView);
                     var semanticModel = document != null ? await document.GetSemanticModelAsync(cancellationToken) : null;
 
                     progress.Report(0.5, "Searching for handlers...");
-                    
+
                     // Step 3: Check if this type implements both IRequest and INotification
                     bool implementsBoth = MediatRPatternMatcher.ImplementsBothRequestAndNotification(targetRequestType, semanticModel);
-                    
+
                     // Step 4: Find all handlers (both request and notification if applicable)
                     cancellationToken.ThrowIfCancellationRequested();
                     var allHandlers = await _handlerFinder.FindAllHandlersAsync(targetRequestType, semanticModel, cancellationToken);
-                    
+
                     progress.Report(0.8, "Processing results...");
-                    
+
                     if (allHandlers?.Count == 0)
                     {
                         var requestTypeName = targetRequestType.Name;
                         string message;
-                        
+
                         if (implementsBoth)
                         {
                             message = $"Could not find any handlers for '{requestTypeName}'.\n\n" +
@@ -89,35 +88,35 @@ namespace VSIXExtention.Services
                             var allRequestInfo = MediatRPatternMatcher.GetAllRequestInfo(targetRequestType, semanticModel);
                             var isNotification = allRequestInfo.FirstOrDefault()?.IsNotification ?? false;
                             var handlerType = isNotification ? "INotificationHandler" : "IRequestHandler";
-                            
+
                             message = $"Could not find {handlerType} for '{requestTypeName}'.\n\n" +
                                      "Make sure:\n" +
                                      $"• The corresponding {handlerType} exists in the solution\n" +
                                      "• The solution is compiled without errors";
                         }
-                        
+
                         await _uiService.ShowErrorMessageAsync(message, "MediatR Extension");
                         return false;
                     }
 
                     progress.Report(0.9, "Navigating to handlers...");
-                    
+
                     // Step 5: Provide user feedback about what was found
                     if (implementsBoth && allHandlers.Count > 0)
                     {
                         var requestHandlers = allHandlers.Where(h => !h.IsNotificationHandler).ToList();
                         var notificationHandlers = allHandlers.Where(h => h.IsNotificationHandler).ToList();
-                        
+
                         System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRCommandHandler: Found {requestHandlers.Count} request handler(s) and {notificationHandlers.Count} notification handler(s) for {targetRequestType.Name}");
                     }
 
                     progress.Report(1.0, "Complete!");
-                    
+
                     // Step 6: Navigate to handlers
                     // For mixed handlers, we'll let the navigation service handle the display
                     // The navigation service will show them grouped by type
                     var navigationSuccess = await _navigationService.NavigateToHandlersAsync(allHandlers, false);
-                    
+
                     // If navigation failed, just return the result (no cache retry)
                     return navigationSuccess;
                 }
@@ -138,7 +137,7 @@ namespace VSIXExtention.Services
                 using (var progress = await _uiService.ShowProgressAsync("Searching for MediatR usages...", "Finding where request is sent/published"))
                 {
                     progress.Report(0.1, "Analyzing current position...");
-                    
+
                     // Step 1: Determine the request type to find usages for (handles both handlers and nested calls)
                     cancellationToken.ThrowIfCancellationRequested();
                     var requestTypeToFind = await GetTargetRequestTypeForUsage(textView, position);
@@ -155,7 +154,7 @@ namespace VSIXExtention.Services
                     }
 
                     progress.Report(0.3, "Getting semantic model...");
-                    
+
                     // Step 2: Get semantic model for the document
                     var document = _workspaceService.GetDocumentFromTextView(textView);
                     var semanticModel = document != null ? await document.GetSemanticModelAsync(cancellationToken) : null;
@@ -175,13 +174,13 @@ namespace VSIXExtention.Services
                     }
 
                     progress.Report(0.5, "Searching for usages...");
-                    
+
                     // Step 4: Find all usages of this request type
                     cancellationToken.ThrowIfCancellationRequested();
                     var usages = await _usageFinder.FindUsagesAsync(requestTypeToFind, cancellationToken);
-                    
+
                     progress.Report(0.8, "Processing results...");
-                    
+
                     if (usages?.Count == 0)
                     {
                         var requestTypeName = requestTypeToFind.Name;
@@ -190,16 +189,16 @@ namespace VSIXExtention.Services
                                        "• The request is being sent somewhere in the solution using _mediator.Send() or _mediator.Publish()\n" +
                                        "• The solution is compiled without errors\n" +
                                        "• You have the correct MediatR references";
-                        
+
                         await _uiService.ShowErrorMessageAsync(message, "MediatR Extension");
                         return false;
                     }
 
                     progress.Report(0.9, "Navigating to usages...");
-                    
+
                     // Step 5: Provide user feedback about what was found
                     System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRCommandHandler: Found {usages.Count} usage(s) for {requestTypeToFind.Name}");
-                    
+
                     // Log usage details
                     foreach (var usage in usages)
                     {
@@ -207,10 +206,10 @@ namespace VSIXExtention.Services
                     }
 
                     progress.Report(1.0, "Complete!");
-                    
+
                     // Step 6: Navigate to usages
                     var navigationSuccess = await _navigationService.NavigateToUsagesAsync(usages, requestTypeToFind.Name);
-                    
+
                     return navigationSuccess;
                 }
             }
@@ -245,13 +244,13 @@ namespace VSIXExtention.Services
                 }
                 return null;
             }
-            
+
             // Check if this is a request type itself
             if (MediatRPatternMatcher.IsMediatRRequest(typeSymbol, semanticModel))
             {
                 return typeSymbol;
             }
-            
+
             return null;
         }
 
@@ -263,7 +262,7 @@ namespace VSIXExtention.Services
         {
             // First check if we're in a nested MediatR call context
             bool isInNestedContext = await _contextService.IsInNestedMediatRCallContextAsync(textView);
-            
+
             if (isInNestedContext)
             {
                 // For nested calls, we want to navigate to the nested request's handler
@@ -273,19 +272,19 @@ namespace VSIXExtention.Services
                 {
                     return nestedRequestType;
                 }
-                
+
                 // If that fails, fall back to the general method
                 var typeSymbol = await _contextService.GetMediatRTypeSymbolAsync(textView, position);
-                
+
                 var document = _workspaceService.GetDocumentFromTextView(textView);
                 var semanticModel = document != null ? await document.GetSemanticModelAsync() : null;
-                
+
                 if (typeSymbol != null && semanticModel != null && MediatRPatternMatcher.IsMediatRRequest(typeSymbol, semanticModel))
                 {
                     return typeSymbol;
                 }
             }
-            
+
             // Fall back to the standard logic for direct request contexts
             return await _contextService.GetMediatRTypeSymbolAsync(textView, position);
         }
@@ -298,10 +297,10 @@ namespace VSIXExtention.Services
         {
             var document = _workspaceService.GetDocumentFromTextView(textView);
             var semanticModel = document != null ? await document.GetSemanticModelAsync() : null;
-            
+
             // First check if we're in a nested MediatR call context
             bool isInNestedContext = await _contextService.IsInNestedMediatRCallContextAsync(textView);
-            
+
             if (isInNestedContext)
             {
                 // For nested calls in usage context, we want to find the current handler's request type (shallow navigation)
@@ -310,7 +309,7 @@ namespace VSIXExtention.Services
                 {
                     var root = await syntaxTree.GetRootAsync();
                     var node = root.FindNode(new Microsoft.CodeAnalysis.Text.TextSpan(position, 0), getInnermostNodeForTie: true);
-                    
+
                     // Find the containing handler type (class/record)
                     var typeDeclaration = node.FirstAncestorOrSelf<TypeDeclarationSyntax>();
                     if (typeDeclaration != null && semanticModel != null)
@@ -331,10 +330,10 @@ namespace VSIXExtention.Services
                     }
                 }
             }
-            
+
             // Fall back to the standard logic
             var typeSymbolAtPosition = await _contextService.GetMediatRTypeSymbolAsync(textView, position);
             return GetRequestTypeFromContext(typeSymbolAtPosition, semanticModel);
         }
     }
-} 
+}

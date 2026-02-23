@@ -1,19 +1,19 @@
-using System;
-using System.Linq;
-using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.VisualStudio.Text.Editor;
+using System;
+using System.Linq;
+using System.Threading.Tasks;
 
-namespace VSIXExtention.Services
+namespace VSIXExtension.Services
 {
     public class MediatRContextService
     {
         private readonly WorkspaceService _workspaceService;
         private static readonly string[] MediatRSendMethods = { "Send", "SendAsync" };
         private static readonly string[] MediatRPublishMethods = { "Publish", "PublishAsync" };
-        
+
         public MediatRContextService(WorkspaceService workspaceService)
         {
             _workspaceService = workspaceService;
@@ -80,7 +80,7 @@ namespace VSIXExtention.Services
                 {
                     var typeSymbol = semanticModel.GetDeclaredSymbol(typeDeclaration) as INamedTypeSymbol;
                     System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: GetMediatRTypeSymbol: TypeSymbol from declaration: {typeSymbol?.Name}, IsRecord: {typeSymbol?.IsRecord}, TypeKind: {typeSymbol?.TypeKind}");
-                    
+
                     if (IsValidMediatRType(typeSymbol, semanticModel))
                     {
                         System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: GetMediatRTypeSymbol: Found valid MediatR type: {typeSymbol.Name}");
@@ -93,7 +93,7 @@ namespace VSIXExtention.Services
                 {
                     var symbolInfo = semanticModel.GetSymbolInfo(identifierName);
                     System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: GetMediatRTypeSymbol: SymbolInfo from identifier: {symbolInfo.Symbol?.GetType().Name} - {symbolInfo.Symbol?.Name}");
-                    
+
                     if (symbolInfo.Symbol is INamedTypeSymbol namedTypeSymbol && IsValidMediatRType(namedTypeSymbol, semanticModel))
                     {
                         System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: GetMediatRTypeSymbol: Found valid MediatR type from identifier: {namedTypeSymbol.Name}");
@@ -136,7 +136,7 @@ namespace VSIXExtention.Services
             }
 
             // Handle BaseTypeSyntax (: IRequest<T> part)
-            if (node is BaseTypeSyntax || node is SimpleBaseTypeSyntax || 
+            if (node is BaseTypeSyntax || node is SimpleBaseTypeSyntax ||
                 node.FirstAncestorOrSelf<BaseTypeSyntax>() != null)
             {
                 var baseList = node.FirstAncestorOrSelf<BaseListSyntax>();
@@ -254,7 +254,7 @@ namespace VSIXExtention.Services
                     return false;
 
                 var typeSymbol = semanticModel.GetDeclaredSymbol(typeDeclaration) as INamedTypeSymbol;
-                
+
                 // Check if this is a MediatR handler
                 if (IsValidMediatRHandler(typeSymbol, semanticModel))
                 {
@@ -318,7 +318,7 @@ namespace VSIXExtention.Services
             try
             {
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Checking nested MediatR context at position {textView.Caret.Position.BufferPosition.Position}");
-                
+
                 // Performance optimization: early bailout checks
                 if (!IsValidContext(textView))
                 {
@@ -354,7 +354,7 @@ namespace VSIXExtention.Services
                     System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Not in any method");
                     return false;
                 }
-                
+
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: In method: {methodDeclaration.Identifier.ValueText}");
 
                 var typeDeclaration = node.FirstAncestorOrSelf<TypeDeclarationSyntax>();
@@ -369,7 +369,7 @@ namespace VSIXExtention.Services
                 // Check for potential MediatR calls with syntax-only analysis first
                 var invocationNode = node.FirstAncestorOrSelf<InvocationExpressionSyntax>();
                 var objectCreationNode = node.FirstAncestorOrSelf<ObjectCreationExpressionSyntax>();
-                
+
                 // Quick syntax check: look for mediator method names
                 bool hasPotentialMediatRCall = false;
                 if (invocationNode != null)
@@ -392,7 +392,7 @@ namespace VSIXExtention.Services
                 if (!hasPotentialMediatRCall && node is IdentifierNameSyntax identifier)
                 {
                     System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Checking identifier '{identifier.Identifier.ValueText}' for variable in MediatR call");
-                    
+
                     // Check if this identifier is inside an argument list of a potential MediatR call
                     var argumentList = identifier.FirstAncestorOrSelf<ArgumentListSyntax>();
                     if (argumentList?.Parent is InvocationExpressionSyntax parentInvocation &&
@@ -400,7 +400,7 @@ namespace VSIXExtention.Services
                     {
                         var parentMethodName = parentMemberAccess.Name.Identifier.ValueText;
                         isVariableInMediatRCall = IsKnownMediatRMethod(parentMethodName);
-                        
+
                         System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Parent method: {parentMethodName}, isVariableInMediatRCall: {isVariableInMediatRCall}");
                     }
                     else if (argumentList?.Parent is InvocationExpressionSyntax parentInvocation2 &&
@@ -434,7 +434,7 @@ namespace VSIXExtention.Services
 
                 // Check if this is a MediatR handler (preferred context)
                 bool isHandlerClass = IsValidMediatRHandler(typeSymbol, semanticModel);
-                
+
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: {typeSymbol?.Name ?? "null"} isHandlerType: {isHandlerClass}");
 
                 // Now do full semantic analysis
@@ -489,7 +489,7 @@ namespace VSIXExtention.Services
             try
             {
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Checking nested MediatR context IN HANDLER at position {textView.Caret.Position.BufferPosition.Position}");
-                
+
                 // First check if we're in nested context at all
                 bool isInNestedContext = await IsInNestedMediatRCallContextAsync(textView);
                 if (!isInNestedContext)
@@ -522,9 +522,9 @@ namespace VSIXExtention.Services
 
                 var typeSymbol = semanticModel.GetDeclaredSymbol(typeDeclaration) as INamedTypeSymbol;
                 bool isHandlerClass = IsValidMediatRHandler(typeSymbol, semanticModel);
-                
+
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Nested context in handler check - {typeSymbol?.Name} isHandlerType: {isHandlerClass}");
-                
+
                 return isHandlerClass;
             }
             catch (Exception ex)
@@ -547,8 +547,8 @@ namespace VSIXExtention.Services
                         var typeInfo = semanticModel.GetTypeInfo(memberAccess.Expression);
                         if (typeInfo.Type?.ContainingNamespace?.ToDisplayString() == "MediatR")
                             return true;
-                        if (typeInfo.Type?.AllInterfaces.Any(i => 
-                            i.ContainingNamespace?.ToDisplayString() == "MediatR" && 
+                        if (typeInfo.Type?.AllInterfaces.Any(i =>
+                            i.ContainingNamespace?.ToDisplayString() == "MediatR" &&
                             (i.Name == "IMediator" || i.Name == "ISender" || i.Name == "IPublisher")) == true)
                         {
                             return true;
@@ -567,8 +567,8 @@ namespace VSIXExtention.Services
                         var typeInfo = semanticModel.GetTypeInfo(targetExpr);
                         if (typeInfo.Type?.ContainingNamespace?.ToDisplayString() == "MediatR")
                             return true;
-                        if (typeInfo.Type?.AllInterfaces.Any(i => 
-                            i.ContainingNamespace?.ToDisplayString() == "MediatR" && 
+                        if (typeInfo.Type?.AllInterfaces.Any(i =>
+                            i.ContainingNamespace?.ToDisplayString() == "MediatR" &&
                             (i.Name == "IMediator" || i.Name == "ISender" || i.Name == "IPublisher")) == true)
                         {
                             return true;
@@ -633,7 +633,7 @@ namespace VSIXExtention.Services
                 if (objectCreation != null)
                 {
                     var typeInfo = semanticModel.GetTypeInfo(objectCreation);
-                    if (typeInfo.Type is INamedTypeSymbol createdType && 
+                    if (typeInfo.Type is INamedTypeSymbol createdType &&
                         MediatRPatternMatcher.IsMediatRRequest(createdType, semanticModel))
                     {
                         return createdType;
@@ -663,10 +663,10 @@ namespace VSIXExtention.Services
                         {
                             // Get the type of the variable being passed
                             var symbolInfo = semanticModel.GetSymbolInfo(identifierInCall);
-                            
+
                             System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Variable '{identifierInCall.Identifier.ValueText}' symbol: {symbolInfo.Symbol?.GetType().Name}");
-                            
-                            if (symbolInfo.Symbol is ILocalSymbol localSymbol && 
+
+                            if (symbolInfo.Symbol is ILocalSymbol localSymbol &&
                                 localSymbol.Type is INamedTypeSymbol variableType)
                             {
                                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Variable type: {variableType.Name}");
@@ -676,9 +676,9 @@ namespace VSIXExtention.Services
                                     return variableType;
                                 }
                             }
-                            
+
                             // Also handle field/property references
-                            if (symbolInfo.Symbol is IFieldSymbol fieldSymbol && 
+                            if (symbolInfo.Symbol is IFieldSymbol fieldSymbol &&
                                 fieldSymbol.Type is INamedTypeSymbol fieldType)
                             {
                                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Field type: {fieldType.Name}");
@@ -688,8 +688,8 @@ namespace VSIXExtention.Services
                                     return fieldType;
                                 }
                             }
-                            
-                            if (symbolInfo.Symbol is IPropertySymbol propertySymbol && 
+
+                            if (symbolInfo.Symbol is IPropertySymbol propertySymbol &&
                                 propertySymbol.Type is INamedTypeSymbol propertyType)
                             {
                                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Property type: {propertyType.Name}");
@@ -699,7 +699,7 @@ namespace VSIXExtention.Services
                                     return propertyType;
                                 }
                             }
-                            
+
                             // Also try getting type info directly if symbol info fails
                             var typeInfo = semanticModel.GetTypeInfo(identifierInCall);
                             if (typeInfo.Type is INamedTypeSymbol directType)
@@ -720,7 +720,7 @@ namespace VSIXExtention.Services
                 if (identifierName != null)
                 {
                     var symbolInfo = semanticModel.GetSymbolInfo(identifierName);
-                    if (symbolInfo.Symbol is INamedTypeSymbol namedType && 
+                    if (symbolInfo.Symbol is INamedTypeSymbol namedType &&
                         MediatRPatternMatcher.IsMediatRRequest(namedType, semanticModel))
                     {
                         return namedType;
@@ -786,4 +786,4 @@ namespace VSIXExtention.Services
             return null;
         }
     }
-} 
+}

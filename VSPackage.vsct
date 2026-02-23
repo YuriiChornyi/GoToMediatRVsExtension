@@ -4,30 +4,30 @@
   <Extern href="stdidcmd.h"/>
   <Extern href="vsshlids.h"/>
 
-  <Commands package="guidVSIXExtentionPackage">
+  <Commands package="guidVSIXExtensionPackage">
     <Groups>
-      <Group guid="guidVSIXExtentionPackageCmdSet" id="MyMenuGroup" priority="0x0600">
+      <Group guid="guidVSIXExtensionPackageCmdSet" id="MyMenuGroup" priority="0x0600">
         <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_EDIT"/>
       </Group>
-      <Group guid="guidVSIXExtentionPackageCmdSet" id="MyToolsMenuGroup" priority="0x0600">
+      <Group guid="guidVSIXExtensionPackageCmdSet" id="MyToolsMenuGroup" priority="0x0600">
         <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_TOOLS"/>
       </Group>
-      <Group guid="guidVSIXExtentionPackageCmdSet" id="MyContextMenuGroup" priority="0x0100">
+      <Group guid="guidVSIXExtensionPackageCmdSet" id="MyContextMenuGroup" priority="0x0100">
         <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_CODEWIN"/>
       </Group>
     </Groups>
 
     <Buttons>
-      <Button guid="guidVSIXExtentionPackageCmdSet" id="GoToMediatRImplementationCommandId" priority="0x0100" type="Button">
-        <Parent guid="guidVSIXExtentionPackageCmdSet" id="MyMenuGroup" />
+      <Button guid="guidVSIXExtensionPackageCmdSet" id="GoToMediatRImplementationCommandId" priority="0x0100" type="Button">
+        <Parent guid="guidVSIXExtensionPackageCmdSet" id="MyMenuGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
         <CommandFlag>TextChanges</CommandFlag>
         <Strings>
           <ButtonText>Go to MediatR Implementation</ButtonText>
         </Strings>
       </Button>
-      <Button guid="guidVSIXExtentionPackageCmdSet" id="GoToMediatRImplementationContextCommandId" priority="0x0200" type="Button">
-        <Parent guid="guidVSIXExtentionPackageCmdSet" id="MyContextMenuGroup" />
+      <Button guid="guidVSIXExtensionPackageCmdSet" id="GoToMediatRImplementationContextCommandId" priority="0x0200" type="Button">
+        <Parent guid="guidVSIXExtensionPackageCmdSet" id="MyContextMenuGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
         <CommandFlag>TextChanges</CommandFlag>
         <Strings>
@@ -36,16 +36,16 @@
           <CommandName>Go to MediatR Implementation</CommandName>
         </Strings>
       </Button>
-      <Button guid="guidVSIXExtentionPackageCmdSet" id="GoToMediatRUsageCommandId" priority="0x0300" type="Button">
-        <Parent guid="guidVSIXExtentionPackageCmdSet" id="MyMenuGroup" />
+      <Button guid="guidVSIXExtensionPackageCmdSet" id="GoToMediatRUsageCommandId" priority="0x0300" type="Button">
+        <Parent guid="guidVSIXExtensionPackageCmdSet" id="MyMenuGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
         <CommandFlag>TextChanges</CommandFlag>
         <Strings>
           <ButtonText>Go to MediatR Send/Publish</ButtonText>
         </Strings>
       </Button>
-      <Button guid="guidVSIXExtentionPackageCmdSet" id="GoToMediatRUsageContextCommandId" priority="0x0400" type="Button">
-        <Parent guid="guidVSIXExtentionPackageCmdSet" id="MyContextMenuGroup" />
+      <Button guid="guidVSIXExtensionPackageCmdSet" id="GoToMediatRUsageContextCommandId" priority="0x0400" type="Button">
+        <Parent guid="guidVSIXExtensionPackageCmdSet" id="MyContextMenuGroup" />
         <CommandFlag>DynamicVisibility</CommandFlag>
         <CommandFlag>TextChanges</CommandFlag>
         <Strings>
@@ -54,7 +54,7 @@
           <CommandName>Go to MediatR Send/Publish</CommandName>
         </Strings>
       </Button>
-      <Button guid="guidVSIXExtentionPackageCmdSet" id="CodeLensNavigateCommandId" priority="0x0500" type="Button">
+      <Button guid="guidVSIXExtensionPackageCmdSet" id="CodeLensNavigateCommandId" priority="0x0500" type="Button">
         <CommandFlag>DynamicVisibility</CommandFlag>
         <CommandFlag>DefaultInvisible</CommandFlag>
         <Strings>
@@ -65,14 +65,14 @@
   </Commands>
 
   <KeyBindings>
-    <KeyBinding guid="guidVSIXExtentionPackageCmdSet" id="GoToMediatRImplementationCommandId" editor="guidVSStd97" key1="F12" mod1="Control Alt"/>
-    <KeyBinding guid="guidVSIXExtentionPackageCmdSet" id="GoToMediatRUsageCommandId" editor="guidVSStd97" key1="F11" mod1="Control Alt"/>
+    <KeyBinding guid="guidVSIXExtensionPackageCmdSet" id="GoToMediatRImplementationCommandId" editor="guidVSStd97" key1="F12" mod1="Control Alt"/>
+    <KeyBinding guid="guidVSIXExtensionPackageCmdSet" id="GoToMediatRUsageCommandId" editor="guidVSStd97" key1="F11" mod1="Control Alt"/>
   </KeyBindings>
 
   <Symbols>
-    <GuidSymbol name="guidVSIXExtentionPackage" value="{cf38f10f-fa64-4c4b-9ebc-6d7d897607ea}" />
+    <GuidSymbol name="guidVSIXExtensionPackage" value="{cf38f10f-fa64-4c4b-9ebc-6d7d897607ea}" />
 
-    <GuidSymbol name="guidVSIXExtentionPackageCmdSet" value="{cf38f10f-fa64-4c4b-9ebc-6d7d897607eb}">
+    <GuidSymbol name="guidVSIXExtensionPackageCmdSet" value="{cf38f10f-fa64-4c4b-9ebc-6d7d897607eb}">
       <IDSymbol name="MyMenuGroup" value="0x1020" />
       <IDSymbol name="MyToolsMenuGroup" value="0x1021" />
       <IDSymbol name="MyContextMenuGroup" value="0x1022" />

@@ -1,12 +1,12 @@
+using CodeLensOopProvider.Models;
+using Microsoft.VisualStudio.Language.CodeLens;
+using Microsoft.VisualStudio.Language.CodeLens.Remoting;
+using Microsoft.VisualStudio.Threading;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
-using CodeLensOopProvider.Models;
-using Microsoft.VisualStudio.Language.CodeLens;
-using Microsoft.VisualStudio.Language.CodeLens.Remoting;
-using Microsoft.VisualStudio.Threading;
 
 namespace CodeLensOopProvider
 {
@@ -44,6 +44,8 @@ namespace CodeLensOopProvider
                         Array.Empty<object>(),
                         token).ConfigureAwait(false);
 
+                    MediatRCodeLensProvider.IsCodeLensEnabled = enabled;
+
                     if (!enabled)
                     {
                         Debug.WriteLine("MediatRNavigationExtension: CodeLensDataPoint: CodeLens disabled in options, returning null");
@@ -52,7 +54,9 @@ namespace CodeLensOopProvider
                 }
                 catch (Exception ex)
                 {
-                    Debug.WriteLine($"MediatRNavigationExtension: CodeLensDataPoint: IsCodeLensEnabled RPC failed (continuing): {ex.Message}");
+                    Debug.WriteLine($"MediatRNavigationExtension: CodeLensDataPoint: IsCodeLensEnabled RPC failed: {ex.Message}");
+                    if (!MediatRCodeLensProvider.IsCodeLensEnabled)
+                        return null;
                 }
 
                 var result = await _callbackService.InvokeAsync<MediatRCodeLensResult>(

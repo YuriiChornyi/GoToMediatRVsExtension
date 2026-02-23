@@ -2,7 +2,7 @@ using System.Windows;
 using System.Windows.Input;
 using Microsoft.VisualStudio.PlatformUI;
 
-namespace VSIXExtention
+namespace VSIXExtension
 {
     public partial class HandlerSelectionDialog : DialogWindow
     {

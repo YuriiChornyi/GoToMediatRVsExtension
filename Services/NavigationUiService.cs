@@ -3,9 +3,9 @@ using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using System;
 using System.Threading.Tasks;
-using VSIXExtention.Models;
+using VSIXExtension.Models;
 
-namespace VSIXExtention.Services
+namespace VSIXExtension.Services
 {
     public interface IProgress : IDisposable
     {
@@ -147,15 +147,15 @@ namespace VSIXExtention.Services
         public async Task<IProgress> ShowProgressAsync(string title, string initialMessage)
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            
+
             var statusBar = await VS.Services.GetStatusBarAsync();
             var vsStatusBar = statusBar as IVsStatusbar;
-            
+
             if (vsStatusBar != null)
             {
                 return new ProgressReporter(vsStatusBar, title);
             }
-            
+
             // Fallback to a no-op progress reporter
             return new NoOpProgressReporter();
         }

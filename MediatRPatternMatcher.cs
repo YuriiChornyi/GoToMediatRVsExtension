@@ -6,9 +6,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using VSIXExtention.Models;
+using VSIXExtension.Models;
 
-namespace VSIXExtention
+namespace VSIXExtension
 {
     public class MediatRPatternMatcher
     {
@@ -109,7 +109,7 @@ namespace VSIXExtention
 
             return typeSymbol.AllInterfaces.Any(i =>
                 i.ContainingNamespace?.ToDisplayString() == MediatRNamespace &&
-                (i.Name == RequestHandlerInterface || 
+                (i.Name == RequestHandlerInterface ||
                  i.Name == NotificationHandlerInterface ||
                  i.Name == StreamRequestHandlerInterface ||
                  i.Name == RequestExceptionHandlerInterface ||
@@ -260,7 +260,7 @@ namespace VSIXExtention
 
             // Find all handler types for this request/notification type
             var handlers = await FindHandlersInSolutionBySymbol(solution, typeSymbol, cancellationToken);
-            
+
             // Add handlers to HashSet to automatically deduplicate
             foreach (var handler in handlers)
             {
@@ -309,7 +309,7 @@ namespace VSIXExtention
                 });
 
             var projectResults = await Task.WhenAll(projectTasks);
-            
+
             foreach (var projectHandlers in projectResults)
             {
                 handlers.AddRange(projectHandlers);

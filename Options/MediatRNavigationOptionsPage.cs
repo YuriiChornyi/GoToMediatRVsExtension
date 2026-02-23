@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using Community.VisualStudio.Toolkit;
 
-namespace VSIXExtention.Options
+namespace VSIXExtension.Options
 {
     [ComVisible(true)]
     public class MediatRNavigationOptionsPage : BaseOptionPage<MediatRNavigationOptions> { }

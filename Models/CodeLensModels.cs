@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace VSIXExtention.Models
+namespace VSIXExtension.Models
 {
     public class MediatRCodeLensResult
     {

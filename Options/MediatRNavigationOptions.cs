@@ -1,7 +1,7 @@
 using Community.VisualStudio.Toolkit;
 using System.ComponentModel;
 
-namespace VSIXExtention.Options
+namespace VSIXExtension.Options
 {
     public class MediatRNavigationOptions : BaseOptionModel<MediatRNavigationOptions>
     {

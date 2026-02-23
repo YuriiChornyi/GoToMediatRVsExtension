@@ -7,7 +7,7 @@
 		<NumberOfParentCategoriesToRollUp>1</NumberOfParentCategoriesToRollUp>
         <DefaultName>Command.cs</DefaultName>
         <Icon>MediatRTemplate.ico</Icon>
-        <TemplateID>VSIXExtention.MediatRCommand</TemplateID>
+        <TemplateID>VSIXExtension.MediatRCommand</TemplateID>
         <SortOrder>1</SortOrder>
         <CreateNewFolder>false</CreateNewFolder>
     </TemplateData>
