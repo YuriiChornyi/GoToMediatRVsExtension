@@ -3,8 +3,10 @@ using Microsoft.VisualStudio.Language.CodeLens.Remoting;
 using Microsoft.VisualStudio.Language.Intellisense;
 using Microsoft.VisualStudio.Utilities;
 using System;
+using System.Collections.Concurrent;
 using System.ComponentModel.Composition;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -22,6 +24,12 @@ namespace CodeLensOopProvider
         private static long _lastEnabledCheckTicks = 0;
         private static readonly long RecheckIntervalTicks = 30 * TimeSpan.TicksPerSecond;
         private readonly Lazy<ICodeLensCallbackService> _callbackService;
+
+        // OOP-side negative cache: key = "{filePath}|{elementDescription}", value = file last-write ticks when cached.
+        // Populated by data points when they confirm a type is NOT MediatR.
+        // Auto-invalidated when the file changes (timestamp no longer matches).
+        internal static readonly ConcurrentDictionary<string, long> _oopNegativeCache
+            = new ConcurrentDictionary<string, long>();
 
         [ImportingConstructor]
         public MediatRCodeLensProvider(Lazy<ICodeLensCallbackService> callbackService)
@@ -41,23 +49,33 @@ namespace CodeLensOopProvider
                 Interlocked.Exchange(ref _lastEnabledCheckTicks, now);
             }
 
-            bool canCreate = false;
+            bool syntaxMatch =
+                descriptor.Kind == CodeElementKinds.Type ||
+                (descriptor.Kind == CodeElementKinds.Method && IsLikelyHandlerMethod(descriptor.ElementDescription));
 
-            if (descriptor.Kind == CodeElementKinds.Type)
+            if (!syntaxMatch)
+                return Task.FromResult(false);
+
+            // Check OOP-side negative cache (populated by data points after semantic confirmation).
+            // The cache entry is keyed by file + element and validated against the file's last-write
+            // timestamp, so saving a file automatically invalidates its stale cache entries.
+            var cacheKey = $"{descriptor.FilePath}|{descriptor.ElementDescription}";
+            if (_oopNegativeCache.TryGetValue(cacheKey, out long cachedTicks))
             {
-                canCreate = true;
-            }
-            else if (descriptor.Kind == CodeElementKinds.Method)
-            {
-                canCreate = IsLikelyHandlerMethod(descriptor.ElementDescription);
+                try
+                {
+                    long currentTicks = File.GetLastWriteTimeUtc(descriptor.FilePath).Ticks;
+                    if (currentTicks == cachedTicks)
+                        return Task.FromResult(false); // confirmed non-MediatR, file unchanged
+                }
+                catch { /* can't read timestamp — fall through and let data point re-check */ }
+
+                // File changed or timestamp unreadable — remove stale entry and re-evaluate
+                _oopNegativeCache.TryRemove(cacheKey, out _);
             }
 
-            if (canCreate)
-            {
-                Debug.WriteLine($"MediatRNavigationExtension: CodeLensProvider: CanCreate=true for {descriptor.Kind} '{descriptor.ElementDescription}' in '{descriptor.FilePath}'");
-            }
-
-            return Task.FromResult(canCreate);
+            Debug.WriteLine($"MediatRNavigationExtension: CodeLensProvider: CanCreate=true for {descriptor.Kind} '{descriptor.ElementDescription}' in '{descriptor.FilePath}'");
+            return Task.FromResult(true);
         }
 
         private static readonly string[] HandlerMethodNames = { "Handle", "Execute" };

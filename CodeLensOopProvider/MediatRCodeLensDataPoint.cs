@@ -5,6 +5,7 @@ using Microsoft.VisualStudio.Threading;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -71,11 +72,25 @@ namespace CodeLensOopProvider
                     return null;
                 }
 
+                var oopCacheKey = $"{Descriptor.FilePath}|{Descriptor.ElementDescription}";
                 if (!result.IsMediatRType)
                 {
+                    // Populate the OOP-side negative cache so CanCreateDataPointAsync can skip
+                    // this element on future VS scans (as long as the file hasn't changed).
+                    try
+                    {
+                        long ticks = File.GetLastWriteTimeUtc(Descriptor.FilePath).Ticks;
+                        MediatRCodeLensProvider._oopNegativeCache[oopCacheKey] = ticks;
+                    }
+                    catch { /* ignore — cache just won't be populated for this entry */ }
+
                     Debug.WriteLine($"MediatRNavigationExtension: CodeLensDataPoint: '{Descriptor.ElementDescription}' is not a MediatR type, suppressing");
                     return null;
                 }
+
+                // Confirmed MediatR type — ensure it is not in the negative cache
+                // (handles the case where a class was previously non-MediatR but was just updated).
+                MediatRCodeLensProvider._oopNegativeCache.TryRemove(oopCacheKey, out _);
 
                 Debug.WriteLine($"MediatRNavigationExtension: CodeLensDataPoint: SUCCESS — '{Descriptor.ElementDescription}' => '{result.Description}'");
 
