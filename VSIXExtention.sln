@@ -1,6 +1,6 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.14.36127.28
+# Visual Studio Version 18
+VisualStudioVersion = 18.4.11612.150 stable
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VSIXExtension", "VSIXExtension.csproj", "{B0B3D7CA-3205-4C0E-8B68-71D421005ED5}"
 EndProject
@@ -9,8 +9,8 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{8EC462FD-D22E-90A8-E5CE-7E832BA40C5D}"
 	ProjectSection(SolutionItems) = preProject
 		.gitignore = .gitignore
-		CURSOR_PROJECT_GUIDELINES.md = CURSOR_PROJECT_GUIDELINES.md
 		README.md = README.md
+		PROJECT_GUIDELINES.md = PROJECT_GUIDELINES.md
 	EndProjectSection
 EndProject
 Global

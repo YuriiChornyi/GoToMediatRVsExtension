@@ -30,7 +30,7 @@
 ## Project Structure
 
 ```
-VSIXExtention/
+GoToMediatRVsExtension/                # Main VSIX project
 ├── Services/
 │   ├── MediatRCommandHandler.cs       # Orchestration — coordinates the full navigation flow
 │   ├── MediatRContextService.cs       # Context detection — what is the cursor positioned on?
@@ -38,13 +38,18 @@ VSIXExtention/
 │   ├── MediatRUsageFinder.cs          # Send/Publish call-site discovery
 │   ├── MediatRNavigationService.cs    # VS navigation + multi-result selection UI
 │   ├── NavigationUiService.cs         # Dialogs, progress bar, message boxes
-│   └── WorkspaceService.cs            # Roslyn VisualStudioWorkspace access
+│   ├── WorkspaceService.cs            # Roslyn VisualStudioWorkspace access
+│   └── CodeLensCallbackService.cs     # MEF-exported ICodeLensCallbackListener; VS-side RPC receiver for CodeLens
 ├── Models/
-│   ├── MediatRHandlerInfo.cs          # Handler metadata (implements Equals/GetHashCode)
+│   ├── MediatRHandlerInfo.cs          # Handler metadata + MediatRHandlerType enum (implements Equals/GetHashCode)
 │   ├── MediatRRequestInfo.cs          # Request/notification metadata
 │   ├── MediatRUsageInfo.cs            # Usage call-site metadata (implements Equals/GetHashCode)
+│   ├── CodeLensModels.cs              # MediatRCodeLensResult, MediatRCodeLensDetailResult, CodeLensDetailEntry
 │   ├── HandlerDisplayInfo.cs          # UI display wrapper for handlers
 │   └── UsageDisplayInfo.cs            # UI display wrapper for usages
+├── Options/
+│   ├── MediatRNavigationOptions.cs    # Option values (singleton, two categories: CodeLens, Commands)
+│   └── MediatRNavigationOptionsPage.cs # Tools → Options page registration
 ├── Helpers/
 │   └── RoslynSymbolHelper.cs          # Standalone utility: file path → (SemanticModel, INamedTypeSymbol)
 ├── Templates/                         # VS item templates (compiled to ZIP in VSIX)
@@ -57,11 +62,18 @@ VSIXExtention/
 ├── VSIXExtentionPackage.cs            # AsyncPackage entry point, command registration
 ├── VSPackage.vsct                     # Command/menu/keyboard shortcut definitions
 └── source.extension.vsixmanifest      # Extension identity and metadata
+
+CodeLensOopProvider/                   # Separate OOP assembly (runs in VS's out-of-process CodeLens host)
+├── MediatRCodeLensProvider.cs         # IAsyncCodeLensDataPointProvider — filters types/methods, creates data points
+├── MediatRCodeLensDataPoint.cs        # IAsyncCodeLensDataPoint — RPC calls to VS process via ICodeLensCallbackService
+└── Models/CodeLensModels.cs           # Shared DTO types used across the RPC boundary
 ```
 
 ---
 
 ## Architecture
+
+### Navigation
 
 ```
 VSIXExtentionPackage          ← VS entry point, constructs service graph
@@ -77,7 +89,30 @@ VSIXExtentionPackage          ← VS entry point, constructs service graph
 WorkspaceService  ← injected into all services that need Roslyn workspace
 ```
 
-`VSIXExtentionPackage` is the composition root — it constructs all services in `InitializeAsync` and passes them down. Do not introduce a DI container.
+### CodeLens (OOP architecture)
+
+```
+CodeLensOopProvider (out-of-process)
+    MediatRCodeLensProvider.CanCreateDataPointAsync()
+        → filters: CodeElementKinds.Type  OR  method named Handle/Execute/Process
+        → OOP-side negative cache (file-timestamp-keyed)
+    MediatRCodeLensProvider.CreateDataPointAsync()
+        → MediatRCodeLensDataPoint
+
+    MediatRCodeLensDataPoint.GetDataAsync()
+        → ICodeLensCallbackService RPC → CodeLensCallbackService.GetMediatRCodeLensData()
+    MediatRCodeLensDataPoint.GetDetailsAsync()
+        → ICodeLensCallbackService RPC → CodeLensCallbackService.GetMediatRCodeLensDetails()
+
+VS process (in-process)
+    CodeLensCallbackService (MEF ICodeLensCallbackListener)
+        → MediatRPatternMatcher       (is this a request/handler?)
+        → MediatRPatternMatcher.FindAllHandlersForTypeSymbol()
+        → MediatRUsageFinder.FindUsagesAsync()
+        → solution-version-keyed cache (summary + detail)
+```
+
+`VSIXExtentionPackage` is the composition root for navigation services — it constructs all services in `InitializeAsync` and passes them down. Do not introduce a DI container. `CodeLensCallbackService` is MEF-composed independently by VS.
 
 ---
 
@@ -90,19 +125,34 @@ WorkspaceService  ← injected into all services that need Roslyn workspace
 - Dual implementation: a single class implementing both `IRequest` and `INotification`
 
 ### Handler types (`MediatRHandlerType` enum)
-| Enum value | Interface |
-|---|---|
-| `RequestHandler` | `IRequestHandler<TRequest>` / `IRequestHandler<TRequest, TResponse>` |
-| `NotificationHandler` | `INotificationHandler<TNotification>` |
-| `StreamRequestHandler` | `IStreamRequestHandler<TRequest, TResponse>` |
-| `RequestExceptionHandler` | `IRequestExceptionHandler<TRequest, TResponse, TException>` |
-| `RequestExceptionAction` | `IRequestExceptionAction<TRequest, TException>` |
+| Enum value | Interface | Method |
+|---|---|---|
+| `RequestHandler` | `IRequestHandler<TRequest>` / `IRequestHandler<TRequest, TResponse>` | `Handle` |
+| `NotificationHandler` | `INotificationHandler<TNotification>` | `Handle` |
+| `StreamRequestHandler` | `IStreamRequestHandler<TRequest, TResponse>` | `Handle` |
+| `RequestExceptionHandler` | `IRequestExceptionHandler<TRequest, TResponse, TException>` | `Handle` |
+| `RequestExceptionAction` | `IRequestExceptionAction<TRequest, TException>` | `Execute` |
 
 ### Usage patterns detected
 - Direct: `_mediator.Send(request)`, `_mediator.Publish(notification)`
 - Async: `await _mediator.SendAsync(...)`, `await _mediator.PublishAsync(...)`
 - Conditional access: `_mediator?.Send(...)`
 - Nested: cursor inside a method body that contains a `Send/Publish` call
+
+---
+
+## CodeLens Notes
+
+The CodeLens feature runs across two processes and two assemblies:
+
+- **`CodeLensOopProvider`** (out-of-process) — `MediatRCodeLensProvider` and `MediatRCodeLensDataPoint`. This assembly cannot access the VS workspace directly; it communicates back to the main VS process via `ICodeLensCallbackService` RPC.
+- **Main VSIX** (in-process) — `CodeLensCallbackService` implements `ICodeLensCallbackListener` (MEF export). It receives RPC calls, does the Roslyn analysis, and returns results.
+
+**`HandlerMethodNames`** appears in **both** `MediatRCodeLensProvider.cs` (OOP side) and `CodeLensCallbackService.cs` (VS side). They must be kept in sync. Currently: `{ "Handle", "Execute" }`. When adding a handler interface with a different method name, add the name to both arrays.
+
+**Negative cache** in `MediatRCodeLensProvider` is keyed by `"{filePath}|{elementDescription}"` and stores the file's last-write timestamp. It is auto-invalidated when the file changes.
+
+**Solution-version cache** in `CodeLensCallbackService` is keyed by file path + element description (and by type symbol's fully qualified name). It clears automatically on `WorkspaceChanged` events with a configurable debounce delay.
 
 ---
 
@@ -164,6 +214,8 @@ Context detection must remain performance-first:
 ### `MediatRCommandHandler.cs`
 Orchestration only — no Roslyn analysis, no UI. If you find yourself doing symbol work here, move it to `MediatRContextService`, `MediatRHandlerFinder`, or `MediatRUsageFinder`.
 
+`GetRequestTypeFromContext()` contains a hardcoded whitelist of MediatR interface names used to extract `TRequest` from the handler's generic arguments. When adding a new handler interface, extend this list — otherwise "Go to Usage" will silently return null for that handler type.
+
 ### `WorkspaceService.cs`
 Dual-init pattern (explicit set from `InitializeAsync` + lazy fallback). Do not remove the lazy fallback — it is needed when the workspace is accessed before `InitializeAsync` completes.
 
@@ -191,10 +243,15 @@ Dual-init pattern (explicit set from `InitializeAsync` + lazy fallback). Do not 
 ## Adding New Features
 
 ### New MediatR interface support
-1. Add interface name constant to `MediatRPatternMatcher`.
-2. Extend `IsMediatRHandler()` or `IsMediatRRequest()`.
-3. Extend `GetHandlerInfo()` to populate the new `MediatRHandlerType`.
-4. Update `MediatRNavigationService.FormatHandlerDisplayText()` to show the new type prefix in the selection dialog.
+1. Add a value to `MediatRHandlerType` enum in `Models/MediatRHandlerInfo.cs`.
+2. Add an interface name constant to `MediatRPatternMatcher`.
+3. Extend `IsMediatRHandler()` to recognize the new interface name.
+4. Add an `else if` branch to `GetHandlerInfo()` mapping the interface to the correct method name (`Handle`, `Execute`, or `Process`) and the new enum value.
+5. Extend `GetHandlerTypeDescription()` switch for debug logging.
+6. Add `compilation.GetTypeByMetadataName("MediatR.INewInterface\`N")` to the `hasMediatR` check in `FindHandlersInSolutionBySymbol()`.
+7. Update `MediatRCommandHandler.GetRequestTypeFromContext()` — expand the `@interface.Name` whitelist to include the new interface.
+8. Add prefix/display-name cases to `MediatRNavigationService.GetHandlerTypePrefix()` and `GetHandlerTypeDisplayName()`.
+9. If the handler method is named something other than `Handle`/`Execute` (e.g., `Process`): add the method name to `HandlerMethodNames` in both `CodeLensOopProvider/MediatRCodeLensProvider.cs` and `Services/CodeLensCallbackService.cs`.
 
 ### New command
 1. Define the command ID constant in `VSIXExtentionPackage.cs`.

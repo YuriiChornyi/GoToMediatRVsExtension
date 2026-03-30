@@ -19,6 +19,7 @@ Jump instantly between MediatR requests/notifications and their handlers, and fr
 - Finds Send/Publish usages (direct, variable, parameter scenarios)
 - Precise Roslyn‑based navigation to method signatures
 - Works solution‑wide; optimized for performance
+- **CodeLens** — shows handler count and usage count inline above every MediatR type and its Handle/Execute/Process methods
 
 ### Quick start
 - Request → Handler: place the caret on a MediatR request/notification, press Ctrl+Alt+F12 (or use Edit/Context menu).
@@ -27,12 +28,17 @@ Jump instantly between MediatR requests/notifications and their handlers, and fr
 ### Supported patterns
 - **Requests**: `IRequest`, `IRequest<TResponse>`
 - **Notifications**: `INotification`
-- **Handlers**: 
+- **Handlers**:
   - `IRequestHandler<TRequest>`, `IRequestHandler<TRequest,TResponse>`
   - `INotificationHandler<TNotification>`
-  - `IStreamRequestHandler<TRequest,TResponse>` (streaming)
-  - `IRequestExceptionHandler<TRequest,TResponse,TException>` (exception handling)
-  - `IRequestExceptionAction<TRequest,TException>` (exception actions)
+  - `IStreamRequestHandler<TRequest,TResponse>`
+  - `IRequestExceptionHandler<TRequest,TResponse,TException>`
+  - `IRequestExceptionAction<TRequest,TException>`
+
+### Settings
+Options page at **Tools → Options → MediatR Navigation**:
+- Enable/disable CodeLens
+- CodeLens refresh delay (seconds)
 
 ### Requirements
 - Visual Studio 2022-2026 (17.0-18.x)
