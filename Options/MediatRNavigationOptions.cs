@@ -28,5 +28,13 @@ namespace VSIXExtension.Options
         [Description("Show the 'Go to MediatR Send/Publish' command in menus and context menus.")]
         [DefaultValue(true)]
         public bool EnableGoToUsage { get; set; } = true;
+
+        [Category("Razor")]
+        [DisplayName("Enable Razor Support")]
+        [Description("Enable navigation commands in .razor Blazor component files. " +
+                     "Enabled by default. Disable to turn off navigation in .razor files. " +
+                     "CodeLens and .razor.cs code-behind files are supported regardless of this setting.")]
+        [DefaultValue(true)]
+        public bool EnableRazorSupport { get; set; } = true;
     }
 }

@@ -5,6 +5,7 @@ using Microsoft.VisualStudio.LanguageServices;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Text;
 using Microsoft.VisualStudio.Text.Editor;
+using Microsoft.VisualStudio.Text.Projection;
 using Microsoft.VisualStudio.TextManager.Interop;
 using System;
 using System.Linq;
@@ -105,7 +106,19 @@ namespace VSIXExtension.Services
             if (workspace?.CurrentSolution == null)
                 return null;
 
-            var filePath = GetFilePathFromTextView(textView);
+            var buffer = textView.TextBuffer;
+
+            // For .razor files, resolve to the projected C# buffer so Roslyn can provide a semantic model
+            if (buffer.ContentType.IsOfType("razor"))
+            {
+                var csharpBuffer = GetCSharpProjectionBuffer(textView);
+                if (csharpBuffer != null)
+                    buffer = csharpBuffer;
+                else
+                    return null; // No C# projection available — can't navigate
+            }
+
+            var filePath = GetFilePathFromTextBuffer(buffer);
             if (string.IsNullOrEmpty(filePath))
                 return null;
 
@@ -113,6 +126,59 @@ namespace VSIXExtension.Services
             var documentId = documentIds.FirstOrDefault();
 
             return documentId != null ? workspace.CurrentSolution.GetDocument(documentId) : null;
+        }
+
+        /// <summary>
+        /// Returns the projected C# buffer inside a razor view, or null if none exists.
+        /// </summary>
+        internal ITextBuffer GetCSharpProjectionBuffer(ITextView textView)
+        {
+            try
+            {
+                return textView.BufferGraph
+                    .GetTextBuffers(b => b.ContentType.IsOfType("CSharp"))
+                    .FirstOrDefault();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Convenience method: maps a position from the outer text view buffer to the projected C# buffer
+        /// for .razor files. For non-razor files, returns the position unchanged.
+        /// </summary>
+        public int GetMappedPosition(ITextView textView, int position)
+        {
+            if (!textView.TextBuffer.ContentType.IsOfType("razor"))
+                return position;
+
+            var csharpBuffer = GetCSharpProjectionBuffer(textView);
+            if (csharpBuffer == null)
+                return position;
+
+            var mapped = MapToProjectedPosition(textView, csharpBuffer, position);
+            return mapped >= 0 ? mapped : position;
+        }
+
+        /// <summary>
+        /// Maps a position in the outer (razor) buffer to its counterpart in the projected C# buffer.
+        /// Returns -1 if mapping is unavailable.
+        /// </summary>
+        internal int MapToProjectedPosition(ITextView textView, ITextBuffer csharpBuffer, int outerPosition)
+        {
+            try
+            {
+                var outerPoint = new SnapshotPoint(textView.TextSnapshot, outerPosition);
+                var mapped = textView.BufferGraph.MapDownToBuffer(
+                    outerPoint, PointTrackingMode.Positive, csharpBuffer, PositionAffinity.Successor);
+                return mapped.HasValue ? mapped.Value.Position : -1;
+            }
+            catch
+            {
+                return -1;
+            }
         }
 
         public string GetFilePathFromTextView(ITextView textView)

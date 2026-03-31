@@ -306,6 +306,9 @@ namespace VSIXExtension.Services
         /// </summary>
         private async Task<Microsoft.CodeAnalysis.INamedTypeSymbol> GetTargetRequestTypeForImplementation(ITextView textView, int position)
         {
+            // Map position for .razor files (outer buffer → projected C# buffer)
+            position = _workspaceService.GetMappedPosition(textView, position);
+
             // First check if we're in a nested MediatR call context
             bool isInNestedContext = await _contextService.IsInNestedMediatRCallContextAsync(textView);
 
@@ -341,6 +344,9 @@ namespace VSIXExtension.Services
         /// </summary>
         private async Task<Microsoft.CodeAnalysis.INamedTypeSymbol> GetTargetRequestTypeForUsage(ITextView textView, int position)
         {
+            // Map position for .razor files (outer buffer → projected C# buffer)
+            position = _workspaceService.GetMappedPosition(textView, position);
+
             var document = _workspaceService.GetDocumentFromTextView(textView);
             var semanticModel = document != null ? await document.GetSemanticModelAsync() : null;
 

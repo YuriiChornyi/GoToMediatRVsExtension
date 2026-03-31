@@ -5,6 +5,7 @@ using Microsoft.VisualStudio.Text.Editor;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using VSIXExtension.Options;
 
 namespace VSIXExtension.Services
 {
@@ -30,7 +31,7 @@ namespace VSIXExtension.Services
                 if (document == null)
                     return false;
 
-                var typeSymbol = await GetMediatRTypeSymbolAsync(textView, textView.Caret.Position.BufferPosition.Position);
+                var typeSymbol = await GetMediatRTypeSymbolAsync(textView, GetMappedCaretPosition(textView));
                 return typeSymbol != null;
             }
             catch (Exception ex)
@@ -169,15 +170,21 @@ namespace VSIXExtension.Services
             if (textBuffer == null)
                 return false;
 
-            // Quick content type check
+            // Quick content type check — accept CSharp and (optionally) Razor
             var contentType = textBuffer.ContentType;
-            if (contentType?.TypeName != "CSharp")
+            bool isCSharp = contentType.IsOfType("CSharp");
+            bool isRazor = contentType.IsOfType("razor") &&
+                           MediatRNavigationOptions.Instance.EnableRazorSupport;
+
+            if (!isCSharp && !isRazor)
                 return false;
 
             var filePath = _workspaceService.GetFilePathFromTextView(textView);
 
-            // Only process C# files
-            if (string.IsNullOrEmpty(filePath) || !filePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+            // Only process C# and .razor files
+            if (string.IsNullOrEmpty(filePath) ||
+                (!filePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) &&
+                 !filePath.EndsWith(".razor", StringComparison.OrdinalIgnoreCase)))
                 return false;
 
             // Skip multiline selections for performance
@@ -195,12 +202,43 @@ namespace VSIXExtension.Services
             return endLine.LineNumber > startLine.LineNumber;
         }
 
+        /// <summary>
+        /// Returns the caret position mapped to the projected C# buffer for .razor files,
+        /// or the raw caret position for regular C# files.
+        /// </summary>
+        private int GetMappedCaretPosition(ITextView textView)
+        {
+            var outerPosition = textView.Caret.Position.BufferPosition.Position;
+
+            if (!textView.TextBuffer.ContentType.IsOfType("razor"))
+                return outerPosition;
+
+            var csharpBuffer = _workspaceService.GetCSharpProjectionBuffer(textView);
+            if (csharpBuffer == null)
+                return outerPosition;
+
+            var mapped = _workspaceService.MapToProjectedPosition(textView, csharpBuffer, outerPosition);
+            return mapped >= 0 ? mapped : outerPosition;
+        }
+
         private TextSpan GetTextSpan(ITextView textView, int position)
         {
             if (!textView.Selection.IsEmpty)
             {
                 var selectionSpan = textView.Selection.SelectedSpans[0];
-                return new TextSpan(selectionSpan.Start.Position, selectionSpan.Length);
+                var start = selectionSpan.Start.Position;
+                var length = selectionSpan.Length;
+
+                // For .razor files, map selection positions to the projected C# buffer
+                if (textView.TextBuffer.ContentType.IsOfType("razor"))
+                {
+                    var mappedStart = _workspaceService.GetMappedPosition(textView, start);
+                    var mappedEnd = _workspaceService.GetMappedPosition(textView, selectionSpan.End.Position);
+                    start = mappedStart;
+                    length = Math.Max(0, mappedEnd - mappedStart);
+                }
+
+                return new TextSpan(start, length);
             }
 
             return new TextSpan(position, 0);
@@ -233,7 +271,7 @@ namespace VSIXExtension.Services
                 if (document == null)
                     return false;
 
-                var position = textView.Caret.Position.BufferPosition.Position;
+                var position = GetMappedCaretPosition(textView);
                 var syntaxTree = await document.GetSyntaxTreeAsync();
                 if (syntaxTree == null)
                     return false;
@@ -287,7 +325,7 @@ namespace VSIXExtension.Services
                 if (document == null)
                     return false;
 
-                var typeSymbol = await GetMediatRTypeSymbolAsync(textView, textView.Caret.Position.BufferPosition.Position);
+                var typeSymbol = await GetMediatRTypeSymbolAsync(textView, GetMappedCaretPosition(textView));
                 if (typeSymbol == null)
                     return false;
 
@@ -329,7 +367,7 @@ namespace VSIXExtension.Services
                     return false;
                 }
 
-                var position = textView.Caret.Position.BufferPosition.Position;
+                var position = GetMappedCaretPosition(textView);
                 var syntaxTree = await document.GetSyntaxTreeAsync();
                 if (syntaxTree == null)
                 {
@@ -499,7 +537,7 @@ namespace VSIXExtension.Services
                 if (document == null)
                     return false;
 
-                var position = textView.Caret.Position.BufferPosition.Position;
+                var position = GetMappedCaretPosition(textView);
                 var syntaxTree = await document.GetSyntaxTreeAsync();
                 if (syntaxTree == null)
                     return false;
