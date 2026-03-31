@@ -10,6 +10,7 @@ namespace VSIXExtension.Models
         public string Description { get; set; }
         public int HandlerCount { get; set; }
         public int UsageCount { get; set; }
+        public bool IsUsageCountKnown { get; set; }
         public string HandledRequestName { get; set; }
     }
 

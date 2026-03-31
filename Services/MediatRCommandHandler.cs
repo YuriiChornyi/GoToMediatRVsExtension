@@ -141,8 +141,48 @@ namespace VSIXExtension.Services
                     // Step 1: Determine the request type to find usages for (handles both handlers and nested calls)
                     cancellationToken.ThrowIfCancellationRequested();
                     var requestTypeToFind = await GetTargetRequestTypeForUsage(textView, position);
+
+                    var document = _workspaceService.GetDocumentFromTextView(textView);
+
                     if (requestTypeToFind == null)
                     {
+                        // Provide a more specific message for open-generic handlers where request type
+                        // is a type parameter (e.g., Behavior<TRequest> : IPipelineBehavior<TRequest, TResponse>).
+                        var sm = document != null ? await document.GetSemanticModelAsync(cancellationToken) : null;
+                        var handlerTypeSymbol = await _contextService.GetMediatRTypeSymbolAsync(textView, position);
+
+                        if (handlerTypeSymbol != null && MediatRPatternMatcher.IsMediatRHandler(handlerTypeSymbol, sm))
+                        {
+                            var isOpenGenericHandler = handlerTypeSymbol.AllInterfaces.Any(@interface =>
+                            {
+                                var ns = @interface.ContainingNamespace?.ToDisplayString();
+                                if (ns != "MediatR" && ns != "MediatR.Pipeline")
+                                    return false;
+
+                                if ((@interface.Name == "IRequestHandler" ||
+                                     @interface.Name == "INotificationHandler" ||
+                                     @interface.Name == "IPipelineBehavior" ||
+                                     @interface.Name == "IStreamPipelineBehavior" ||
+                                     @interface.Name == "IRequestPreProcessor" ||
+                                     @interface.Name == "IRequestPostProcessor") &&
+                                    @interface.TypeArguments.Length > 0)
+                                {
+                                    return @interface.TypeArguments[0] is ITypeParameterSymbol;
+                                }
+
+                                return false;
+                            });
+
+                            if (isOpenGenericHandler)
+                            {
+                                await _uiService.ShowErrorMessageAsync(
+                                    $"'{handlerTypeSymbol.Name}' is an open-generic handler — the request type cannot be resolved.\n\n" +
+                                    "Position your cursor on a concrete handler or on a specific request type instead.",
+                                    "MediatR Extension");
+                                return false;
+                            }
+                        }
+
                         await _uiService.ShowErrorMessageAsync(
                             "Could not find MediatR request/handler at the current position.\n\n" +
                             "Make sure:\n" +
@@ -156,7 +196,6 @@ namespace VSIXExtension.Services
                     progress.Report(0.3, "Getting semantic model...");
 
                     // Step 2: Get semantic model for the document
-                    var document = _workspaceService.GetDocumentFromTextView(textView);
                     var semanticModel = document != null ? await document.GetSemanticModelAsync(cancellationToken) : null;
 
                     progress.Report(0.4, "Verifying request type...");
@@ -232,9 +271,16 @@ namespace VSIXExtension.Services
                     // Find the request type symbol from the handler's generic arguments
                     foreach (var @interface in typeSymbol.AllInterfaces)
                     {
-                        if (@interface.ContainingNamespace?.ToDisplayString() == "MediatR")
+                        var ns = @interface.ContainingNamespace?.ToDisplayString();
+                        if (ns == "MediatR" || ns == "MediatR.Pipeline")
                         {
-                            if ((@interface.Name == "IRequestHandler" || @interface.Name == "INotificationHandler") && @interface.TypeArguments.Length > 0)
+                            if ((@interface.Name == "IRequestHandler" ||
+                                 @interface.Name == "INotificationHandler" ||
+                                 @interface.Name == "IPipelineBehavior" ||
+                                 @interface.Name == "IStreamPipelineBehavior" ||
+                                 @interface.Name == "IRequestPreProcessor" ||
+                                 @interface.Name == "IRequestPostProcessor") &&
+                                @interface.TypeArguments.Length > 0)
                             {
                                 var requestTypeSymbol = @interface.TypeArguments[0] as Microsoft.CodeAnalysis.INamedTypeSymbol;
                                 return requestTypeSymbol;

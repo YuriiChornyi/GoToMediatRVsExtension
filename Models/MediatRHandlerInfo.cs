@@ -8,7 +8,11 @@ namespace VSIXExtension.Models
         NotificationHandler,
         StreamRequestHandler,
         RequestExceptionHandler,
-        RequestExceptionAction
+        RequestExceptionAction,
+        PipelineBehavior,
+        StreamPipelineBehavior,
+        RequestPreProcessor,
+        RequestPostProcessor
     }
 
     public class MediatRHandlerInfo

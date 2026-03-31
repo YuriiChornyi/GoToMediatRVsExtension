@@ -343,6 +343,14 @@ namespace VSIXExtension.Services
                     return $"[Exception:{handler.ExceptionTypeName}] ";
                 case MediatRHandlerType.RequestExceptionAction:
                     return $"[Action:{handler.ExceptionTypeName}] ";
+                case MediatRHandlerType.PipelineBehavior:
+                    return "[Pipeline] ";
+                case MediatRHandlerType.StreamPipelineBehavior:
+                    return "[StreamPipeline] ";
+                case MediatRHandlerType.RequestPreProcessor:
+                    return "[PreProcessor] ";
+                case MediatRHandlerType.RequestPostProcessor:
+                    return "[PostProcessor] ";
                 default:
                     return handler.IsNotificationHandler ? "[Notification] " : "[Request] ";
             }
@@ -362,6 +370,14 @@ namespace VSIXExtension.Services
                     return "Exception Handler";
                 case MediatRHandlerType.RequestExceptionAction:
                     return "Exception Action";
+                case MediatRHandlerType.PipelineBehavior:
+                    return "Pipeline Behavior";
+                case MediatRHandlerType.StreamPipelineBehavior:
+                    return "Stream Pipeline Behavior";
+                case MediatRHandlerType.RequestPreProcessor:
+                    return "Request Pre-Processor";
+                case MediatRHandlerType.RequestPostProcessor:
+                    return "Request Post-Processor";
                 default:
                     return "Handler";
             }

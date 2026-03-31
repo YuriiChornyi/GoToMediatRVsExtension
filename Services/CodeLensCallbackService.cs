@@ -6,6 +6,7 @@ using Microsoft.VisualStudio.LanguageServices;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Utilities;
 using System;
+using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.ComponentModel.Composition;
 using System.Linq;
@@ -155,6 +156,7 @@ namespace VSIXExtension.Services
                     var usageFinder = new MediatRUsageFinder(CreateTempWorkspaceService(workspace));
                     var usages = await usageFinder.FindUsagesAsync(typeSymbol);
                     result.UsageCount = usages.Count;
+                    result.IsUsageCountKnown = true;
 
                     result.Description = $"{result.HandlerCount} handler{(result.HandlerCount != 1 ? "s" : "")} | {result.UsageCount} usage{(result.UsageCount != 1 ? "s" : "")}";
                     System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: Request '{elementDescription}' => {result.Description}");
@@ -164,16 +166,19 @@ namespace VSIXExtension.Services
                     result.IsHandler = true;
                     var handlerInfo = MediatRPatternMatcher.GetHandlerInfo(typeSymbol, null);
                     var requestTypeSymbol = handlerInfo?.RequestTypeSymbol;
-                    result.HandledRequestName = handlerInfo?.RequestTypeName ?? "Unknown";
+                    result.HandledRequestName = ResolveHandledRequestName(handlerInfo, typeSymbol);
+                    result.IsUsageCountKnown = requestTypeSymbol != null;
 
-                    if (requestTypeSymbol != null)
+                    if (result.IsUsageCountKnown)
                     {
                         var usageFinder = new MediatRUsageFinder(CreateTempWorkspaceService(workspace));
                         var usages = await usageFinder.FindUsagesAsync(requestTypeSymbol);
                         result.UsageCount = usages.Count;
                     }
 
-                    result.Description = $"handles {result.HandledRequestName} | {result.UsageCount} usage{(result.UsageCount != 1 ? "s" : "")}";
+                    result.Description = result.IsUsageCountKnown
+                        ? $"handles {result.HandledRequestName} | {result.UsageCount} usage{(result.UsageCount != 1 ? "s" : "")}"
+                        : $"handles {result.HandledRequestName} | ? usages";
                     System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: Handler '{elementDescription}' => {result.Description}");
                 }
 
@@ -286,6 +291,7 @@ namespace VSIXExtension.Services
         {
             var documentIds = workspace.CurrentSolution.GetDocumentIdsWithFilePath(filePath);
             System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: FindTypeSymbol — found {documentIds.Length} document(s) for '{filePath}'");
+            var elementCandidates = BuildTypeNameCandidates(elementDescription);
 
             foreach (var docId in documentIds)
             {
@@ -307,18 +313,23 @@ namespace VSIXExtension.Services
                     if (symbol == null) continue;
 
                     var displayString = symbol.ToDisplayString();
-                    var metadataName = symbol.ContainingNamespace != null && !symbol.ContainingNamespace.IsGlobalNamespace
-                        ? $"{symbol.ContainingNamespace.ToDisplayString()}.{symbol.Name}"
-                        : symbol.Name;
+                    var symbolCandidates = BuildTypeNameCandidates(symbol.Name);
+                    AddTypeNameCandidates(symbolCandidates, symbol.MetadataName);
+                    AddTypeNameCandidates(symbolCandidates, displayString);
+                    AddTypeNameCandidates(symbolCandidates, symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat));
+                    AddTypeNameCandidates(symbolCandidates, symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
 
-                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: FindTypeSymbol — comparing element='{elementDescription}' vs Name='{symbol.Name}', Display='{displayString}', Metadata='{metadataName}'");
+                    if (symbol.ContainingNamespace != null && !symbol.ContainingNamespace.IsGlobalNamespace)
+                    {
+                        var ns = symbol.ContainingNamespace.ToDisplayString();
+                        AddTypeNameCandidates(symbolCandidates, $"{ns}.{symbol.Name}");
+                        AddTypeNameCandidates(symbolCandidates, $"{ns}.{symbol.MetadataName}");
+                    }
 
-                    if (symbol.Name == elementDescription ||
-                        displayString == elementDescription ||
-                        metadataName == elementDescription ||
-                        symbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat) == elementDescription ||
-                        symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == elementDescription ||
-                        symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat).Replace("global::", "") == elementDescription)
+                    bool isMatch = symbolCandidates.Overlaps(elementCandidates);
+                    System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: FindTypeSymbol — comparing element='{elementDescription}' vs Name='{symbol.Name}', Display='{displayString}', match={isMatch}");
+
+                    if (isMatch)
                     {
                         System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: CodeLensCallback: FindTypeSymbol — MATCHED '{elementDescription}' => '{displayString}'");
                         return symbol;
@@ -330,7 +341,72 @@ namespace VSIXExtension.Services
             return null;
         }
 
-        private static readonly string[] HandlerMethodNames = { "Handle", "Execute" };
+        private static HashSet<string> BuildTypeNameCandidates(string value)
+        {
+            var candidates = new HashSet<string>(StringComparer.Ordinal);
+            AddTypeNameCandidates(candidates, value);
+            return candidates;
+        }
+
+        private static void AddTypeNameCandidates(HashSet<string> candidates, string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+
+            value = value.Trim();
+            if (!candidates.Add(value))
+                return;
+
+            if (value.StartsWith("global::", StringComparison.Ordinal))
+                AddTypeNameCandidates(candidates, value.Substring("global::".Length));
+
+            var dotIndex = value.LastIndexOf('.');
+            if (dotIndex >= 0 && dotIndex < value.Length - 1)
+                AddTypeNameCandidates(candidates, value.Substring(dotIndex + 1));
+
+            var genericArgStart = value.IndexOf('<');
+            if (genericArgStart > 0)
+                AddTypeNameCandidates(candidates, value.Substring(0, genericArgStart));
+
+            var arityStart = value.IndexOf('`');
+            if (arityStart > 0)
+                AddTypeNameCandidates(candidates, value.Substring(0, arityStart));
+        }
+
+        private static string ResolveHandledRequestName(MediatRHandlerInfo handlerInfo, INamedTypeSymbol typeSymbol)
+        {
+            if (!string.IsNullOrWhiteSpace(handlerInfo?.RequestTypeName))
+                return handlerInfo.RequestTypeName;
+
+            if (typeSymbol == null)
+                return "Unknown";
+
+            var requestArg = typeSymbol.AllInterfaces
+                .Where(IsSupportedHandlerInterfaceForRequestExtraction)
+                .Select(i => i.TypeArguments[0])
+                .FirstOrDefault();
+
+            return requestArg?.Name ?? "Unknown";
+        }
+
+        private static bool IsSupportedHandlerInterfaceForRequestExtraction(INamedTypeSymbol @interface)
+        {
+            if (@interface == null || @interface.TypeArguments.Length == 0)
+                return false;
+
+            var ns = @interface.ContainingNamespace?.ToDisplayString();
+            if (ns != "MediatR" && ns != "MediatR.Pipeline")
+                return false;
+
+            return @interface.Name == "IRequestHandler" ||
+                   @interface.Name == "INotificationHandler" ||
+                   @interface.Name == "IPipelineBehavior" ||
+                   @interface.Name == "IStreamPipelineBehavior" ||
+                   @interface.Name == "IRequestPreProcessor" ||
+                   @interface.Name == "IRequestPostProcessor";
+        }
+
+        private static readonly string[] HandlerMethodNames = { "Handle", "Execute", "Process" };
 
         private async Task<INamedTypeSymbol> FindContainingHandlerTypeFromMethodAsync(
             VisualStudioWorkspace workspace, string filePath, string elementDescription)

@@ -78,7 +78,7 @@ namespace CodeLensOopProvider
             return Task.FromResult(true);
         }
 
-        private static readonly string[] HandlerMethodNames = { "Handle", "Execute" };
+        private static readonly string[] HandlerMethodNames = { "Handle", "Execute", "Process" };
 
         private static bool IsLikelyHandlerMethod(string elementDescription)
         {

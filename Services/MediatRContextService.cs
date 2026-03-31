@@ -258,11 +258,7 @@ namespace VSIXExtension.Services
                 // Check if this is a MediatR handler
                 if (IsValidMediatRHandler(typeSymbol, semanticModel))
                 {
-                    // If we're in a Handle method, that's definitely handler context
-                    if (methodDeclaration?.Identifier.ValueText == "Handle")
-                        return true;
-
-                    // If we're on the type name or elsewhere in the handler type, also show
+                    // Any position inside a valid handler type is handler context.
                     return true;
                 }
 

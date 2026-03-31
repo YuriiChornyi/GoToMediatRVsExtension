@@ -99,7 +99,9 @@ namespace CodeLensOopProvider
                     Description = result.Description,
                     TooltipText = result.IsRequest
                         ? $"MediatR: {result.HandlerCount} handler(s), {result.UsageCount} usage(s)"
-                        : $"MediatR: handles {result.HandledRequestName}, {result.UsageCount} usage(s)",
+                        : (result.IsUsageCountKnown
+                            ? $"MediatR: handles {result.HandledRequestName}, {result.UsageCount} usage(s)"
+                            : $"MediatR: handles {result.HandledRequestName}, ? usages"),
                     IntValue = result.HandlerCount + result.UsageCount,
                     ImageId = null
                 };
