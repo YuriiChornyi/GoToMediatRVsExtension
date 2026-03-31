@@ -81,9 +81,14 @@ namespace VSIXExtension.Services
             var usages = new List<MediatRUsageInfo>();
             var requestTypeName = requestTypeSymbol.Name;
 
-            // Filter syntax trees early - only process C# files
+            // Filter syntax trees early - only process C# and Razor files.
+            // .razor source files do not typically appear as compilation syntax trees in
+            // VS 2022 (the Razor compiler generates .razor.g.cs instead), but .razor is
+            // listed for forward-compatibility.
             var relevantTrees = compilation.SyntaxTrees
-                .Where(tree => tree.FilePath != null && tree.FilePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
+                .Where(tree => tree.FilePath != null &&
+                    (tree.FilePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ||
+                     tree.FilePath.EndsWith(".razor", StringComparison.OrdinalIgnoreCase)));
 
             foreach (var syntaxTree in relevantTrees)
             {

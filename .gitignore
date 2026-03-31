@@ -54,3 +54,5 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+/.claude
+/.dotnet-home/.dotnet

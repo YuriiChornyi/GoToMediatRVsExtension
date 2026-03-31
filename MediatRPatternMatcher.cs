@@ -26,8 +26,10 @@ namespace VSIXExtension
         private const string RequestPreProcessorInterface = "IRequestPreProcessor";
         private const string RequestPostProcessorInterface = "IRequestPostProcessor";
 
-        // File extensions to consider for handler searches
-        private static readonly string[] CSharpFileExtensions = { ".cs" };
+        // File extensions to consider for handler searches.
+        // .razor.g.cs is already matched by ".cs". ".razor" is listed for forward-compatibility
+        // in case Roslyn directly exposes .razor source trees in a future toolchain version.
+        private static readonly string[] CSharpFileExtensions = { ".cs", ".razor" };
 
         // (Removed caching: previously used a session-only cache for handlers)
 

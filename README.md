@@ -54,6 +54,18 @@ Options page at **Tools → Options → MediatR Navigation**:
 | Enable Go to Implementation command | On | Show the *Go to MediatR Implementation* command in menus |
 | Enable Go to Usage command | On | Show the *Go to MediatR Send/Publish* command in menus |
 
+**Razor**
+| Setting | Default | Description |
+|---|---|---|
+| Enable Razor Support | On | Enable navigation commands in `.razor` Blazor component files. CodeLens and `.razor.cs` code-behind files work regardless of this setting |
+
+### Razor / Blazor support
+- `.razor.cs` **code-behind files** are supported out of the box (no setting required).
+- **Navigation commands** ("Go to Handler", "Go to Usages") work inside `.razor` component files when the cursor is on a MediatR type inside a `@code {}` block.
+- Enabled by default; disable via **Tools → Options → MediatR Navigation → Razor → Enable Razor Support**.
+- CodeLens is not yet supported in `.razor` source files; it works in `.razor.cs` code-behind files.
+- `.cshtml` (Razor Views / MVC) files are not supported.
+
 ### Requirements
 - Visual Studio 2022-2026 (17.0-18.x)
 - .NET Framework 4.7.2+
@@ -63,7 +75,7 @@ Options page at **Tools → Options → MediatR Navigation**:
 - Marketplace
 
 ### Notes
-- If a command doesn’t appear, ensure you’re in a C# file and the caret is on a relevant symbol, the solution builds, and MediatR is referenced.
+- If a command doesn’t appear, ensure you’re in a C# or `.razor` file and the caret is on a relevant symbol, the solution builds, and MediatR is referenced.
 
 ### License
 MIT
