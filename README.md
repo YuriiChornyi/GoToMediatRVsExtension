@@ -34,11 +34,25 @@ Jump instantly between MediatR requests/notifications and their handlers, and fr
   - `IStreamRequestHandler<TRequest,TResponse>`
   - `IRequestExceptionHandler<TRequest,TResponse,TException>`
   - `IRequestExceptionAction<TRequest,TException>`
+  - `IPipelineBehavior<TRequest,TResponse>`
+  - `IStreamPipelineBehavior<TRequest,TResponse>`
+  - `IRequestPreProcessor<TRequest>` (`MediatR.Pipeline`)
+  - `IRequestPostProcessor<TRequest,TResponse>` (`MediatR.Pipeline`)
 
 ### Settings
 Options page at **Tools → Options → MediatR Navigation**:
-- Enable/disable CodeLens
-- CodeLens refresh delay (seconds)
+
+**CodeLens**
+| Setting | Default | Description |
+|---|---|---|
+| Enable CodeLens integration | On | Show handler and usage counts inline above MediatR types and handler methods |
+| Refresh delay (seconds) | 3 | How long to wait after a code change before refreshing counts. Higher values reduce CPU usage |
+
+**Commands**
+| Setting | Default | Description |
+|---|---|---|
+| Enable Go to Implementation command | On | Show the *Go to MediatR Implementation* command in menus |
+| Enable Go to Usage command | On | Show the *Go to MediatR Send/Publish* command in menus |
 
 ### Requirements
 - Visual Studio 2022-2026 (17.0-18.x)
