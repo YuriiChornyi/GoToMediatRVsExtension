@@ -1,12 +1,12 @@
+using Microsoft.CodeAnalysis;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.CodeAnalysis;
-using VSIXExtention.Models;
+using VSIXExtension.Models;
 
-namespace VSIXExtention.Services
+namespace VSIXExtension.Services
 {
     public class MediatRHandlerFinder
     {
@@ -22,7 +22,7 @@ namespace VSIXExtention.Services
             try
             {
                 var workspace = await _workspaceService.GetWorkspaceAsync();
-                
+
                 if (workspace?.CurrentSolution == null)
                 {
                     System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: MediatRHandlerFinder: Workspace or CurrentSolution is null");
@@ -33,16 +33,16 @@ namespace VSIXExtention.Services
                 var allHandlers = await MediatRPatternMatcher.FindAllHandlersForTypeSymbol(workspace.CurrentSolution, requestTypeSymbol, semanticModel, cancellationToken);
 
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRHandlerFinder: Found {allHandlers.Count} total handlers for {requestTypeSymbol.Name}");
-                
+
                 // Log details about what was found
                 var requestHandlers = allHandlers.Where(h => !h.IsNotificationHandler).ToList();
                 var notificationHandlers = allHandlers.Where(h => h.IsNotificationHandler).ToList();
-                
+
                 if (requestHandlers.Any())
                 {
                     System.Diagnostics.Debug.WriteLine($"  - {requestHandlers.Count} request handler(s): {string.Join(", ", requestHandlers.Select(h => h.HandlerTypeName))}");
                 }
-                
+
                 if (notificationHandlers.Any())
                 {
                     System.Diagnostics.Debug.WriteLine($"  - {notificationHandlers.Count} notification handler(s): {string.Join(", ", notificationHandlers.Select(h => h.HandlerTypeName))}");
@@ -57,4 +57,4 @@ namespace VSIXExtention.Services
             }
         }
     }
-} 
+}

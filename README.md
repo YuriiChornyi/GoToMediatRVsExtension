@@ -19,6 +19,7 @@ Jump instantly between MediatR requests/notifications and their handlers, and fr
 - Finds Send/Publish usages (direct, variable, parameter scenarios)
 - Precise Roslyn‑based navigation to method signatures
 - Works solution‑wide; optimized for performance
+- **CodeLens** — shows handler count and usage count inline above every MediatR type and its Handle/Execute/Process methods
 
 ### Quick start
 - Request → Handler: place the caret on a MediatR request/notification, press Ctrl+Alt+F12 (or use Edit/Context menu).
@@ -27,12 +28,31 @@ Jump instantly between MediatR requests/notifications and their handlers, and fr
 ### Supported patterns
 - **Requests**: `IRequest`, `IRequest<TResponse>`
 - **Notifications**: `INotification`
-- **Handlers**: 
+- **Handlers**:
   - `IRequestHandler<TRequest>`, `IRequestHandler<TRequest,TResponse>`
   - `INotificationHandler<TNotification>`
-  - `IStreamRequestHandler<TRequest,TResponse>` (streaming)
-  - `IRequestExceptionHandler<TRequest,TResponse,TException>` (exception handling)
-  - `IRequestExceptionAction<TRequest,TException>` (exception actions)
+  - `IStreamRequestHandler<TRequest,TResponse>`
+  - `IRequestExceptionHandler<TRequest,TResponse,TException>`
+  - `IRequestExceptionAction<TRequest,TException>`
+  - `IPipelineBehavior<TRequest,TResponse>`
+  - `IStreamPipelineBehavior<TRequest,TResponse>`
+  - `IRequestPreProcessor<TRequest>` (`MediatR.Pipeline`)
+  - `IRequestPostProcessor<TRequest,TResponse>` (`MediatR.Pipeline`)
+
+### Settings
+Options page at **Tools → Options → MediatR Navigation**:
+
+**CodeLens**
+| Setting | Default | Description |
+|---|---|---|
+| Enable CodeLens integration | On | Show handler and usage counts inline above MediatR types and handler methods |
+| Refresh delay (seconds) | 3 | How long to wait after a code change before refreshing counts. Higher values reduce CPU usage |
+
+**Commands**
+| Setting | Default | Description |
+|---|---|---|
+| Enable Go to Implementation command | On | Show the *Go to MediatR Implementation* command in menus |
+| Enable Go to Usage command | On | Show the *Go to MediatR Send/Publish* command in menus |
 
 ### Requirements
 - Visual Studio 2022-2026 (17.0-18.x)

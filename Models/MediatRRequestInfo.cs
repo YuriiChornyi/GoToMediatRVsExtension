@@ -1,6 +1,6 @@
 ﻿using Microsoft.CodeAnalysis;
 
-namespace VSIXExtention.Models
+namespace VSIXExtension.Models
 {
     public class MediatRRequestInfo
     {

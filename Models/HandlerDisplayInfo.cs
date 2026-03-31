@@ -1,4 +1,4 @@
-﻿namespace VSIXExtention.Models
+﻿namespace VSIXExtension.Models
 {
     public class HandlerDisplayInfo
     {

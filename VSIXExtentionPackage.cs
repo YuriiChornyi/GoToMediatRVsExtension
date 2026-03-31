@@ -2,6 +2,7 @@ using Community.VisualStudio.Toolkit;
 using Microsoft.VisualStudio.ComponentModelHost;
 using Microsoft.VisualStudio.Editor;
 using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.TextManager.Interop;
 using System;
@@ -9,18 +10,20 @@ using System.ComponentModel.Design;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
-using VSIXExtention.Services;
+using VSIXExtension.Options;
+using VSIXExtension.Services;
 
-namespace VSIXExtention
+namespace VSIXExtension
 {
     /// <summary>
     /// MediatR VS Extension Package with clean architecture
     /// </summary>
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
-    [Guid(VSIXExtentionPackage.PackageGuidString)]
+    [Guid(VSIXExtensionPackage.PackageGuidString)]
     [ProvideMenuResource("Menus.ctmenu", 1)]
-    [ProvideAutoLoad(Microsoft.VisualStudio.Shell.Interop.UIContextGuids80.SolutionExists, PackageAutoLoadFlags.BackgroundLoad)]
-    public sealed class VSIXExtentionPackage : AsyncPackage
+    [ProvideAutoLoad(UIContextGuids80.SolutionExists, PackageAutoLoadFlags.BackgroundLoad)]
+    [ProvideOptionPage(typeof(MediatRNavigationOptionsPage), "MediatR Navigation", "General", 0, 0, true)]
+    public sealed class VSIXExtensionPackage : AsyncPackage
     {
         public const string PackageGuidString = "cf38f10f-fa64-4c4b-9ebc-6d7d897607ea";
         public static readonly Guid CommandSet = new Guid("cf38f10f-fa64-4c4b-9ebc-6d7d897607eb");
@@ -28,12 +31,13 @@ namespace VSIXExtention
         public const int GoToMediatRImplementationContextCommandId = 0x0102;
         public const int GoToMediatRUsageCommandId = 0x0103;
         public const int GoToMediatRUsageContextCommandId = 0x0104;
+        public const int CodeLensNavigateCommandId = 0x0105;
 
         private readonly MediatRCommandHandler _mediatRCommandHandler;
         private readonly MediatRContextService _mediatRContextService;
         private readonly WorkspaceService _workspaceService;
 
-        public VSIXExtentionPackage()
+        public VSIXExtensionPackage()
         {
             _workspaceService = new WorkspaceService();
             _mediatRCommandHandler = new MediatRCommandHandler(_workspaceService);
@@ -57,7 +61,7 @@ namespace VSIXExtention
                 {
                     var vsWorkspace = componentModel.GetService<Microsoft.VisualStudio.LanguageServices.VisualStudioWorkspace>();
                     _workspaceService.SetWorkspace(vsWorkspace);
-                    
+
                     System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Package: Workspace acquired: {vsWorkspace != null}");
                 }
                 else
@@ -179,6 +183,12 @@ namespace VSIXExtention
 
                 commandService.AddCommand(usageContextMenuItem);
 
+                // Register CodeLens navigation command (hidden, invoked by CodeLens detail entry clicks)
+                var codeLensNavCommandID = new CommandID(CommandSet, CodeLensNavigateCommandId);
+                var codeLensNavItem = new OleMenuCommand(ExecuteCodeLensNavigate, codeLensNavCommandID);
+                codeLensNavItem.Supported = true;
+                commandService.AddCommand(codeLensNavItem);
+
                 System.Diagnostics.Debug.WriteLine("MediatRNavigationExtension: Package: Commands registered successfully");
             }
             else
@@ -193,6 +203,14 @@ namespace VSIXExtention
 
             try
             {
+                var options = MediatRNavigationOptions.Instance;
+                if (!options.EnableGoToImplementation)
+                {
+                    command.Visible = false;
+                    command.Enabled = false;
+                    return;
+                }
+
                 var textView = GetActiveTextView();
                 if (textView == null)
                 {
@@ -201,10 +219,6 @@ namespace VSIXExtention
                     return;
                 }
 
-                // "Go to MediatR Implementation" should show when:
-                // 1. On Request/Command/Query/Notification (original behavior)
-                // 2. On nested MediatR call inside handler (new behavior for mixed context)
-                // Performance optimization: check cheaper condition first
                 bool isInRequestContext = await _mediatRContextService.IsInMediatRRequestContextAsync(textView);
                 bool isInNestedCallContext = !isInRequestContext && await _mediatRContextService.IsInNestedMediatRCallContextAsync(textView);
 
@@ -274,6 +288,14 @@ namespace VSIXExtention
 
             try
             {
+                var options = MediatRNavigationOptions.Instance;
+                if (!options.EnableGoToUsage)
+                {
+                    command.Visible = false;
+                    command.Enabled = false;
+                    return;
+                }
+
                 var textView = GetActiveTextView();
                 if (textView == null)
                 {
@@ -282,10 +304,6 @@ namespace VSIXExtention
                     return;
                 }
 
-                // "Go to MediatR Send/Publish" should show when:
-                // 1. On Handler type (class/record) or Handle method (original behavior)
-                // 2. On nested MediatR call inside handler type (new behavior for mixed context)
-                // Performance optimization: check cheaper condition first
                 bool isInHandlerContext = await _mediatRContextService.IsInMediatRHandlerContextAsync(textView);
                 bool isInNestedCallContext = !isInHandlerContext && await _mediatRContextService.IsInNestedMediatRCallInHandlerContextAsync(textView);
 
@@ -298,6 +316,39 @@ namespace VSIXExtention
                 System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Package: Error checking MediatR handler context: {ex.Message}");
                 command.Visible = false;
                 command.Enabled = false;
+            }
+        }
+
+        private void ExecuteCodeLensNavigate(object sender, EventArgs e)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                var args = e as OleMenuCmdEventArgs;
+                var navArgs = args?.InValue as string;
+                if (string.IsNullOrEmpty(navArgs))
+                    return;
+
+                var parts = navArgs.Split('|');
+                if (parts.Length < 3)
+                    return;
+
+                var filePath = parts[0];
+                if (!int.TryParse(parts[1], out int line) || !int.TryParse(parts[2], out int column))
+                    return;
+
+                VsShellUtilities.OpenDocument(this, filePath, Guid.Empty, out _, out _, out IVsWindowFrame frame);
+                if (frame == null)
+                    return;
+
+                frame.Show();
+                var textView = VsShellUtilities.GetTextView(frame);
+                textView?.SetCaretPos(Math.Max(0, line - 1), Math.Max(0, column));
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: Package: Error in CodeLens navigation: {ex.Message}");
             }
         }
 

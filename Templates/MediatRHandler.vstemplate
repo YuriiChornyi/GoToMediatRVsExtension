@@ -6,7 +6,7 @@
         <ProjectType>CSharp</ProjectType>
                 <DefaultName>Handler.cs</DefaultName>
         <Icon>MediatRTemplate.ico</Icon>
-        <TemplateID>VSIXExtention.MediatRHandler</TemplateID>
+        <TemplateID>VSIXExtension.MediatRHandler</TemplateID>
         <SortOrder>1001</SortOrder>
         <CreateNewFolder>false</CreateNewFolder>
     </TemplateData>

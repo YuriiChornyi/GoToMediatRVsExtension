@@ -6,13 +6,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using VSIXExtention.Models;
+using VSIXExtension.Models;
 
-namespace VSIXExtention
+namespace VSIXExtension
 {
     public class MediatRPatternMatcher
     {
         private const string MediatRNamespace = "MediatR";
+        private const string MediatRPipelineNamespace = "MediatR.Pipeline";
         private const string RequestInterface = "IRequest";
         private const string NotificationInterface = "INotification";
         private const string RequestHandlerInterface = "IRequestHandler";
@@ -20,6 +21,10 @@ namespace VSIXExtention
         private const string StreamRequestHandlerInterface = "IStreamRequestHandler";
         private const string RequestExceptionHandlerInterface = "IRequestExceptionHandler";
         private const string RequestExceptionActionInterface = "IRequestExceptionAction";
+        private const string PipelineBehaviorInterface = "IPipelineBehavior";
+        private const string StreamPipelineBehaviorInterface = "IStreamPipelineBehavior";
+        private const string RequestPreProcessorInterface = "IRequestPreProcessor";
+        private const string RequestPostProcessorInterface = "IRequestPostProcessor";
 
         // File extensions to consider for handler searches
         private static readonly string[] CSharpFileExtensions = { ".cs" };
@@ -108,12 +113,17 @@ namespace VSIXExtention
             if (typeSymbol == null) return false;
 
             return typeSymbol.AllInterfaces.Any(i =>
-                i.ContainingNamespace?.ToDisplayString() == MediatRNamespace &&
-                (i.Name == RequestHandlerInterface || 
-                 i.Name == NotificationHandlerInterface ||
-                 i.Name == StreamRequestHandlerInterface ||
-                 i.Name == RequestExceptionHandlerInterface ||
-                 i.Name == RequestExceptionActionInterface));
+                (i.ContainingNamespace?.ToDisplayString() == MediatRNamespace &&
+                 (i.Name == RequestHandlerInterface ||
+                  i.Name == NotificationHandlerInterface ||
+                  i.Name == StreamRequestHandlerInterface ||
+                  i.Name == RequestExceptionHandlerInterface ||
+                  i.Name == RequestExceptionActionInterface ||
+                  i.Name == PipelineBehaviorInterface ||
+                  i.Name == StreamPipelineBehaviorInterface)) ||
+                (i.ContainingNamespace?.ToDisplayString() == MediatRPipelineNamespace &&
+                 (i.Name == RequestPreProcessorInterface ||
+                  i.Name == RequestPostProcessorInterface)));
         }
 
         public static MediatRHandlerInfo GetHandlerInfo(INamedTypeSymbol typeSymbol, SemanticModel semanticModel)
@@ -121,7 +131,11 @@ namespace VSIXExtention
             if (!IsMediatRHandler(typeSymbol, semanticModel))
                 return null;
 
-            foreach (var @interface in typeSymbol.AllInterfaces.Where(i => i.ContainingNamespace?.ToDisplayString() == MediatRNamespace))
+            foreach (var @interface in typeSymbol.AllInterfaces.Where(i =>
+            {
+                var ns = i.ContainingNamespace?.ToDisplayString();
+                return ns == MediatRNamespace || ns == MediatRPipelineNamespace;
+            }))
             {
                 if (@interface.Name == RequestHandlerInterface && @interface.TypeArguments.Length >= 1)
                 {
@@ -180,6 +194,85 @@ namespace VSIXExtention
                         IsNotificationHandler = false,
                         HandlerType = MediatRHandlerType.StreamRequestHandler,
                         IsStreamHandler = true,
+                        IsExceptionHandler = false
+                    };
+                }
+                else if (@interface.Name == PipelineBehaviorInterface && @interface.TypeArguments.Length >= 2)
+                {
+                    var requestTypeName = @interface.TypeArguments[0].Name;
+                    var responseTypeName = @interface.TypeArguments[1].Name;
+                    var handlerLocation = GetHandlerMethodLocation(typeSymbol, @interface, "Handle");
+
+                    return new MediatRHandlerInfo
+                    {
+                        HandlerTypeName = typeSymbol.Name,
+                        RequestTypeName = requestTypeName,
+                        ResponseTypeName = responseTypeName,
+                        RequestTypeSymbol = @interface.TypeArguments[0] as INamedTypeSymbol,
+                        HandlerSymbol = typeSymbol,
+                        Location = handlerLocation ?? typeSymbol.Locations.FirstOrDefault(),
+                        IsNotificationHandler = false,
+                        HandlerType = MediatRHandlerType.PipelineBehavior,
+                        IsStreamHandler = false,
+                        IsExceptionHandler = false
+                    };
+                }
+                else if (@interface.Name == StreamPipelineBehaviorInterface && @interface.TypeArguments.Length >= 2)
+                {
+                    var requestTypeName = @interface.TypeArguments[0].Name;
+                    var responseTypeName = @interface.TypeArguments[1].Name;
+                    var handlerLocation = GetHandlerMethodLocation(typeSymbol, @interface, "Handle");
+
+                    return new MediatRHandlerInfo
+                    {
+                        HandlerTypeName = typeSymbol.Name,
+                        RequestTypeName = requestTypeName,
+                        ResponseTypeName = responseTypeName,
+                        RequestTypeSymbol = @interface.TypeArguments[0] as INamedTypeSymbol,
+                        HandlerSymbol = typeSymbol,
+                        Location = handlerLocation ?? typeSymbol.Locations.FirstOrDefault(),
+                        IsNotificationHandler = false,
+                        HandlerType = MediatRHandlerType.StreamPipelineBehavior,
+                        IsStreamHandler = true,
+                        IsExceptionHandler = false
+                    };
+                }
+                else if (@interface.Name == RequestPreProcessorInterface && @interface.TypeArguments.Length >= 1)
+                {
+                    var requestTypeName = @interface.TypeArguments[0].Name;
+                    var handlerLocation = GetHandlerMethodLocation(typeSymbol, @interface, "Process");
+
+                    return new MediatRHandlerInfo
+                    {
+                        HandlerTypeName = typeSymbol.Name,
+                        RequestTypeName = requestTypeName,
+                        ResponseTypeName = null,
+                        RequestTypeSymbol = @interface.TypeArguments[0] as INamedTypeSymbol,
+                        HandlerSymbol = typeSymbol,
+                        Location = handlerLocation ?? typeSymbol.Locations.FirstOrDefault(),
+                        IsNotificationHandler = false,
+                        HandlerType = MediatRHandlerType.RequestPreProcessor,
+                        IsStreamHandler = false,
+                        IsExceptionHandler = false
+                    };
+                }
+                else if (@interface.Name == RequestPostProcessorInterface && @interface.TypeArguments.Length >= 2)
+                {
+                    var requestTypeName = @interface.TypeArguments[0].Name;
+                    var responseTypeName = @interface.TypeArguments[1].Name;
+                    var handlerLocation = GetHandlerMethodLocation(typeSymbol, @interface, "Process");
+
+                    return new MediatRHandlerInfo
+                    {
+                        HandlerTypeName = typeSymbol.Name,
+                        RequestTypeName = requestTypeName,
+                        ResponseTypeName = responseTypeName,
+                        RequestTypeSymbol = @interface.TypeArguments[0] as INamedTypeSymbol,
+                        HandlerSymbol = typeSymbol,
+                        Location = handlerLocation ?? typeSymbol.Locations.FirstOrDefault(),
+                        IsNotificationHandler = false,
+                        HandlerType = MediatRHandlerType.RequestPostProcessor,
+                        IsStreamHandler = false,
                         IsExceptionHandler = false
                     };
                 }
@@ -260,7 +353,7 @@ namespace VSIXExtention
 
             // Find all handler types for this request/notification type
             var handlers = await FindHandlersInSolutionBySymbol(solution, typeSymbol, cancellationToken);
-            
+
             // Add handlers to HashSet to automatically deduplicate
             foreach (var handler in handlers)
             {
@@ -299,7 +392,11 @@ namespace VSIXExtention
                                       compilation.GetTypeByMetadataName("MediatR.INotificationHandler`1") != null ||
                                       compilation.GetTypeByMetadataName("MediatR.IStreamRequestHandler`2") != null ||
                                       compilation.GetTypeByMetadataName("MediatR.IRequestExceptionHandler`3") != null ||
-                                      compilation.GetTypeByMetadataName("MediatR.IRequestExceptionAction`2") != null;
+                                      compilation.GetTypeByMetadataName("MediatR.IRequestExceptionAction`2") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.IPipelineBehavior`2") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.IStreamPipelineBehavior`2") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.Pipeline.IRequestPreProcessor`1") != null ||
+                                      compilation.GetTypeByMetadataName("MediatR.Pipeline.IRequestPostProcessor`2") != null;
                     if (!hasMediatR)
                     {
                         return new List<MediatRHandlerInfo>();
@@ -309,7 +406,7 @@ namespace VSIXExtention
                 });
 
             var projectResults = await Task.WhenAll(projectTasks);
-            
+
             foreach (var projectHandlers in projectResults)
             {
                 handlers.AddRange(projectHandlers);
@@ -383,6 +480,14 @@ namespace VSIXExtention
                     return "exception handler";
                 case MediatRHandlerType.RequestExceptionAction:
                     return "exception action";
+                case MediatRHandlerType.PipelineBehavior:
+                    return "pipeline behavior";
+                case MediatRHandlerType.StreamPipelineBehavior:
+                    return "stream pipeline behavior";
+                case MediatRHandlerType.RequestPreProcessor:
+                    return "pre-processor";
+                case MediatRHandlerType.RequestPostProcessor:
+                    return "post-processor";
                 default:
                     return "handler";
             }
