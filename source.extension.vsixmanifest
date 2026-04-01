@@ -7,7 +7,7 @@
 		<License>LICENSE.txt</License>
 		<Icon>Resources\icon_90_90.png</Icon>
 		<PreviewImage>Resources\icon_90_90.png</PreviewImage>
-		<Tags>MediatR, CQRS, Navigation, Roslyn, CodeAnalysis, Templates</Tags>
+		<Tags>MediatR;CQRS;Navigation;Roslyn;CodeAnalysis</Tags>
 	</Metadata>
 	<Installation>
 		<InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0, 19.0)">
