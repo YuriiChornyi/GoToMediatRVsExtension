@@ -3,7 +3,7 @@
 	<Metadata>
 		<Identity Id="MediatRNavigationExtension.38878949-742f-44c0-aec9-643fa3fbb5bc" Version="6.9" Language="en-US" Publisher="Yurii Chornyi" />
 		<DisplayName>MediatR Navigation Extension</DisplayName>
-		<Description xml:space="preserve">Navigate from MediatR requests, commands, queries, and notifications to their corresponding handlers (including stream, exception handlers, and exception actions) with "Go to MediatR Implementation" command. Also includes item templates for creating MediatR commands, handlers, notifications, stream handlers, exception handlers, and exception actions.</Description>
+		<Description xml:space="preserve">Navigate between MediatR requests and handlers with Go to Implementation/Usage commands and inline CodeLens. Supports all handler types including stream, pipeline, and exception handlers. Works in .cs and .razor files.</Description>
 		<License>LICENSE.txt</License>
 		<Icon>Resources\icon_90_90.png</Icon>
 		<PreviewImage>Resources\icon_90_90.png</PreviewImage>
