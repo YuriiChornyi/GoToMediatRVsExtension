@@ -56,3 +56,6 @@ TestResult.xml
 nunit-*.xml
 /.claude
 /.dotnet-home/.dotnet
+
+# Test results
+[Tt]est[Rr]esults/

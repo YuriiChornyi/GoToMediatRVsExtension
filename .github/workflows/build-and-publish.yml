@@ -20,6 +20,15 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    # Gate the release: a push straight to main must not tag and publish a broken matcher.
+    - name: Run unit tests
+      run: dotnet test Tests/VSIXExtension.Tests/VSIXExtension.Tests.csproj --configuration Release --nologo
+
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
       with:

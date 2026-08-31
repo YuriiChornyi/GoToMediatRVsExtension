@@ -15,6 +15,24 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    # Unit tests run first: they cover the Roslyn analysis code and finish in seconds, so a broken
+    # pattern matcher fails the PR long before the VSIX build finishes.
+    - name: Run unit tests
+      run: dotnet test Tests/VSIXExtension.Tests/VSIXExtension.Tests.csproj --configuration Release --nologo --logger "trx;LogFileName=test-results.trx" --results-directory TestResults
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: TestResults/*.trx
+        if-no-files-found: ignore
+
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
       with:

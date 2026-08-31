@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>VSIXExtension.Tests</RootNamespace>
+    <AssemblyName>VSIXExtension.Tests</AssemblyName>
+    <!-- The linked production sources predate nullable annotations and log through Debug.WriteLine. -->
+    <Nullable>disable</Nullable>
+    <NoWarn>$(NoWarn);CS1998;RS1024</NoWarn>
+  </PropertyGroup>
+
+  <!--
+    The production code under test is LINKED, not project-referenced. VSIXExtension.csproj is a
+    net48 VSIX project that only builds with the Visual Studio SDK installed, so referencing it
+    would make the tests unrunnable in CI and on non-VS machines.
+
+    Only files that depend on Roslyn alone are linked here. Anything touching
+    Microsoft.VisualStudio.* (WorkspaceService, MediatRContextService, NavigationUiService, the
+    package, CodeLens) cannot be linked and is covered by the manual smoke pass instead - see
+    Tests/MANUAL-SMOKE.md.
+  -->
+  <ItemGroup>
+    <Compile Include="..\..\MediatRPatternMatcher.cs" Link="Production\MediatRPatternMatcher.cs" />
+    <Compile Include="..\..\Models\MediatRHandlerInfo.cs" Link="Production\Models\MediatRHandlerInfo.cs" />
+    <Compile Include="..\..\Models\MediatRRequestInfo.cs" Link="Production\Models\MediatRRequestInfo.cs" />
+    <Compile Include="..\..\Models\MediatRUsageInfo.cs" Link="Production\Models\MediatRUsageInfo.cs" />
+    <Compile Include="..\..\Services\MediatRUsageFinder.cs" Link="Production\Services\MediatRUsageFinder.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Compiled into the test fixtures so the analysed code sees the real MediatR metadata. -->
+    <PackageReference Include="MediatR" Version="12.4.1" />
+
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.14.0" />
+
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+</Project>

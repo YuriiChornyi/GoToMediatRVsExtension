@@ -71,7 +71,20 @@ try {
     Write-Host "  ✅ NuGet: $($nuget.Version)" -ForegroundColor Green
     
     Write-Host ""
-    
+
+    # Run unit tests (same suite the CI workflows run)
+    if ($Test) {
+        Write-Host "🧪 Running unit tests..." -ForegroundColor Blue
+
+        & dotnet test "Tests\VSIXExtension.Tests\VSIXExtension.Tests.csproj" --configuration $Configuration --nologo
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unit tests failed"
+        }
+
+        Write-Host "✅ Unit tests passed" -ForegroundColor Green
+        Write-Host ""
+    }
+
     # Restore NuGet packages
     Write-Host "📦 Restoring NuGet packages..." -ForegroundColor Blue
     & $nuget.Source restore "VSIXExtention.sln"
