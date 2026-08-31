@@ -338,12 +338,50 @@ namespace VSIXExtension
                 var implementation = interfaceMethod != null
                     ? typeSymbol.FindImplementationForInterfaceMember(interfaceMethod) as IMethodSymbol
                     : null;
-                return implementation?.Locations.FirstOrDefault();
+                if (implementation == null)
+                    return null;
+
+                implementation = GetMostDerivedOverride(typeSymbol, implementation);
+
+                // Only point at the method when the handler actually declares it. A handler that
+                // inherits Handle from a base class (e.g. an abstract base that implements
+                // IRequestHandler and delegates to a template method) would otherwise send the
+                // user into shared boilerplate; returning null makes the caller fall back to the
+                // handler's own declaration instead.
+                if (!SymbolEqualityComparer.Default.Equals(implementation.ContainingType?.OriginalDefinition, typeSymbol.OriginalDefinition))
+                    return null;
+
+                return implementation.Locations.FirstOrDefault();
             }
             catch
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Roslyn's interface map points at the member that satisfies the interface, which for an
+        /// override chain is the original virtual declaration on the base type. This walks back
+        /// down the hierarchy to the override declared closest to <paramref name="typeSymbol"/>.
+        /// </summary>
+        private static IMethodSymbol GetMostDerivedOverride(INamedTypeSymbol typeSymbol, IMethodSymbol implementation)
+        {
+            for (var current = typeSymbol; current != null; current = current.BaseType)
+            {
+                if (SymbolEqualityComparer.Default.Equals(current.OriginalDefinition, implementation.ContainingType?.OriginalDefinition))
+                    break;
+
+                foreach (var candidate in current.GetMembers(implementation.Name).OfType<IMethodSymbol>())
+                {
+                    for (var overridden = candidate.OverriddenMethod; overridden != null; overridden = overridden.OverriddenMethod)
+                    {
+                        if (SymbolEqualityComparer.Default.Equals(overridden.OriginalDefinition, implementation.OriginalDefinition))
+                            return candidate;
+                    }
+                }
+            }
+
+            return implementation;
         }
 
         /// <summary>
@@ -362,8 +400,38 @@ namespace VSIXExtension
                 uniqueHandlers.Add(handler);
             }
 
-            var result = uniqueHandlers.ToList();
+            var result = PreferInstantiableHandlers(uniqueHandlers.ToList());
             System.Diagnostics.Debug.WriteLine($"MediatRNavigationExtension: MediatRPatternMatcher: Found {result.Count} unique handlers after deduplication for {typeSymbol.Name}");
+            return result;
+        }
+
+        /// <summary>
+        /// Drops candidates that MediatR could never instantiate — abstract classes and interfaces
+        /// that merely declare the MediatR interface for derived types to inherit. They are kept
+        /// only when nothing concrete of the same kind exists, so navigation still lands somewhere
+        /// useful when the concrete handler lives outside the solution.
+        /// </summary>
+        private static List<MediatRHandlerInfo> PreferInstantiableHandlers(List<MediatRHandlerInfo> handlers)
+        {
+            var result = new List<MediatRHandlerInfo>();
+
+            foreach (var group in handlers.GroupBy(h => h.HandlerType))
+            {
+                // INamedTypeSymbol.IsAbstract covers both abstract classes and interfaces.
+                var instantiable = group.Where(h => h.HandlerSymbol != null &&
+                                                    !h.HandlerSymbol.IsAbstract &&
+                                                    !h.HandlerSymbol.IsStatic).ToList();
+
+                if (instantiable.Count > 0)
+                {
+                    result.AddRange(instantiable);
+                }
+                else
+                {
+                    result.AddRange(group);
+                }
+            }
+
             return result;
         }
 
