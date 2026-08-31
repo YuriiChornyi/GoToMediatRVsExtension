@@ -3,6 +3,7 @@ name: Release on Push to Main
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -10,12 +11,23 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    # Gate the release: a push straight to main must not tag and publish a broken matcher.
+    - name: Run unit tests
+      run: dotnet test Tests/VSIXExtension.Tests/VSIXExtension.Tests.csproj --configuration Release --nologo
 
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
@@ -104,3 +116,86 @@ jobs:
       if: always()
       shell: powershell
       run: Remove-Item "release-notes.md" -ErrorAction SilentlyContinue
+
+  publish:
+    needs: release
+    runs-on: windows-latest
+    environment: production
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download VSIX from release
+      shell: powershell
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        $tag = "v${{ needs.release.outputs.version }}"
+        Write-Host "Downloading VSIX from release: $tag"
+
+        gh release download $tag --pattern "*.vsix" --dir .
+
+        $vsixFile = Get-ChildItem -Path "." -Filter "*.vsix" | Select-Object -First 1
+        if (-not $vsixFile) {
+            Write-Error "No VSIX file found in release $tag"
+            exit 1
+        }
+
+        echo "VSIX_PATH=$($vsixFile.FullName)" >> $env:GITHUB_ENV
+        Write-Host "Downloaded: $($vsixFile.Name) ($($vsixFile.Length) bytes)"
+
+    - name: Locate VsixPublisher.exe
+      shell: powershell
+      run: |
+        $vsWherePath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        if (-not (Test-Path $vsWherePath)) {
+            Write-Error "vswhere.exe not found"
+            exit 1
+        }
+
+        $vsInstallPath = & $vsWherePath -latest -products * -requires Microsoft.VisualStudio.Component.VSSDK -property installationPath
+        if (-not $vsInstallPath) {
+            $vsInstallPath = & $vsWherePath -latest -products * -property installationPath
+        }
+        if (-not $vsInstallPath) {
+            Write-Error "No Visual Studio installation found"
+            exit 1
+        }
+
+        $publisherExe = Get-ChildItem -Path $vsInstallPath -Filter "VsixPublisher.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $publisherExe) {
+            Write-Error "VsixPublisher.exe not found in $vsInstallPath"
+            exit 1
+        }
+
+        echo "VSIX_PUBLISHER=$($publisherExe.FullName)" >> $env:GITHUB_ENV
+        Write-Host "Found VsixPublisher.exe: $($publisherExe.FullName)"
+
+    - name: Publish to marketplace
+      shell: powershell
+      env:
+        MARKETPLACE_PAT: ${{ secrets.MARKETPLACE_PAT }}
+      run: |
+        if (-not $env:MARKETPLACE_PAT) {
+            Write-Error "MARKETPLACE_PAT secret is not set!"
+            exit 1
+        }
+
+        if (-not (Test-Path "publishManifest.json")) {
+            Write-Error "publishManifest.json not found in repo root"
+            exit 1
+        }
+
+        [xml]$manifest = Get-Content "source.extension.vsixmanifest"
+        $version = $manifest.PackageManifest.Metadata.Identity.Version
+        Write-Host "Publishing version $version to Visual Studio Marketplace..."
+
+        & $env:VSIX_PUBLISHER publish -payload "$env:VSIX_PATH" -publishManifest "publishManifest.json" -personalAccessToken $env:MARKETPLACE_PAT -ignoreWarnings "VSIXValidatorWarning01,VSIXValidatorWarning02"
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "VsixPublisher.exe failed with exit code $LASTEXITCODE"
+            exit 1
+        }
+
+        Write-Host "Successfully published version $version to the marketplace."

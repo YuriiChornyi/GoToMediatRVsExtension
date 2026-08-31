@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
 	<Metadata>
-		<Identity Id="MediatRNavigationExtension.38878949-742f-44c0-aec9-643fa3fbb5bc" Version="6.9" Language="en-US" Publisher="Yurii Chornyi" />
+		<Identity Id="MediatRNavigationExtension.38878949-742f-44c0-aec9-643fa3fbb5bc" Version="7.0" Language="en-US" Publisher="Yurii Chornyi" />
 		<DisplayName>MediatR Navigation Extension</DisplayName>
 		<Description xml:space="preserve">Navigate between MediatR requests and handlers with Go to Implementation/Usage commands and inline CodeLens. Supports all handler types including stream, pipeline, and exception handlers. Works in .cs and .razor files.</Description>
 		<License>LICENSE.txt</License>
